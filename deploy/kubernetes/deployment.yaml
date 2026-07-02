@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myrent-api
+  labels:
+    app: myrent-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: myrent-api
+  template:
+    metadata:
+      labels:
+        app: myrent-api
+    spec:
+      containers:
+        - name: api
+          image: myrent-api:latest
+          ports:
+            - containerPort: 7070
+          envFrom:
+            - secretRef:
+                name: myrent-secrets
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 7070
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 7070
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: myrent-api
+spec:
+  selector:
+    app: myrent-api
+  ports:
+    - port: 7070
+      targetPort: 7070
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myrent-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: myrent-frontend
+  template:
+    metadata:
+      labels:
+        app: myrent-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: myrent-frontend:latest
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: myrent-frontend
+spec:
+  selector:
+    app: myrent-frontend
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: myrent-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+    - hosts:
+        - myrent.example.com
+      secretName: myrent-tls
+  rules:
+    - host: myrent.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: myrent-api
+                port:
+                  number: 7070
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: myrent-frontend
+                port:
+                  number: 80

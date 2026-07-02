@@ -1,0 +1,150 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "MyRent Go API",
+    "description": "Plataforma SaaS de administración de propiedades y arriendos",
+    "version": "1.0.0"
+  },
+  "servers": [
+    { "url": "http://localhost:7070", "description": "Development" },
+    { "url": "https://api.myrent.example.com", "description": "Production" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "TokenPair": {
+        "type": "object",
+        "properties": {
+          "access_token": { "type": "string" },
+          "refresh_token": { "type": "string" },
+          "expires_in": { "type": "integer" }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["email", "password", "first_name", "last_name", "org_name"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "minLength": 8 },
+          "first_name": { "type": "string" },
+          "last_name": { "type": "string" },
+          "org_name": { "type": "string" }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string" },
+          "password": { "type": "string" }
+        }
+      },
+      "Property": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "type": { "type": "string", "enum": ["house", "apartment", "land", "warehouse", "office", "parking"] },
+          "status": { "type": "string", "enum": ["available", "rented", "maintenance", "for_sale"] },
+          "address": { "type": "object" },
+          "financials": { "type": "object" }
+        }
+      },
+      "Dashboard": {
+        "type": "object",
+        "properties": {
+          "total_properties": { "type": "integer" },
+          "rented_properties": { "type": "integer" },
+          "occupancy_rate": { "type": "number" },
+          "monthly_income": { "type": "number" },
+          "monthly_expenses": { "type": "number" },
+          "net_cash_flow": { "type": "number" },
+          "overdue_payments": { "type": "integer" }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Register user and organization",
+        "requestBody": {
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RegisterRequest" } } }
+        },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TokenPair" } } } }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Login",
+        "requestBody": {
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } } }
+        },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TokenPair" } } } }
+        }
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "tags": ["auth"],
+        "security": [{ "BearerAuth": [] }],
+        "summary": "Current user",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/v1/dashboard": {
+      "get": {
+        "tags": ["dashboard"],
+        "security": [{ "BearerAuth": [] }],
+        "summary": "Financial dashboard",
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Dashboard" } } } }
+        }
+      }
+    },
+    "/api/v1/properties": {
+      "get": {
+        "tags": ["properties"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "type": "string" } },
+          { "name": "page", "in": "query", "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "post": {
+        "tags": ["properties"],
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/ws": {
+      "get": {
+        "tags": ["websocket"],
+        "summary": "WebSocket real-time events",
+        "parameters": [
+          { "name": "org_id", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "101": { "description": "Switching Protocols" } }
+      }
+    }
+  }
+}

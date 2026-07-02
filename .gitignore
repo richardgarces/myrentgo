@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+frontend/dist/
+frontend/node_modules/
+
+# Runtime / local dev
+.myrent/
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Storage
+storage/
+backups/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+coverage.out
+coverage.html
+*.test
+
+# Logs
+*.log
+
+# Go
+vendor/

@@ -1,0 +1,67 @@
+services:
+  mongodb:
+    image: mongo:7
+    restart: always
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: myrent
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    restart: always
+    environment:
+      APP_ENV: production
+      MONGODB_URI: mongodb://mongodb:27017
+      MONGODB_DATABASE: myrent
+      JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      FRONTEND_URL: ${FRONTEND_URL}
+      MFA_ENABLED: "true"
+      RATE_LIMIT_RPS: "20"
+    depends_on:
+      - mongodb
+    volumes:
+      - api_storage:/app/storage
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 512M
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - api
+
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - api
+
+volumes:
+  mongodb_data:
+  api_storage:
+  caddy_data:
+  caddy_config:

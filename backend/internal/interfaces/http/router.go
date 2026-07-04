@@ -17,13 +17,15 @@ type Router struct {
 }
 
 type Deps struct {
-	Config    *config.Config
-	Auth      *handlers.AuthHandler
-	Property  *handlers.PropertyHandler
-	Dashboard *handlers.DashboardHandler
-	Resources *handlers.ResourcesHandler
-	AuthMW    *middleware.AuthMiddleware
-	WSHub     *websocket.Hub
+	Config        *config.Config
+	Auth          *handlers.AuthHandler
+	Property      *handlers.PropertyHandler
+	Dashboard     *handlers.DashboardHandler
+	Indicators    *handlers.IndicatorsHandler
+	Resources     *handlers.ResourcesHandler
+	EmailNotify   *handlers.EmailNotificationsHandler
+	AuthMW        *middleware.AuthMiddleware
+	WSHub         *websocket.Hub
 }
 
 func NewRouter(deps Deps) *Router {
@@ -64,6 +66,7 @@ func NewRouter(deps Deps) *Router {
 		protected.Use(deps.AuthMW.RequireAuth())
 		{
 			protected.GET("/dashboard", deps.Dashboard.Get)
+			protected.GET("/indicators/uf", deps.Indicators.GetUF)
 			protected.GET("/calendar", deps.Resources.GetCalendar)
 
 			props := protected.Group("/properties")
@@ -100,6 +103,17 @@ func NewRouter(deps Deps) *Router {
 				payments.POST("/generate-pending", deps.AuthMW.RequireRole(writeRoles...), deps.Resources.GeneratePendingRentPayments)
 				payments.POST("", deps.AuthMW.RequireRole(writeRoles...), deps.Resources.CreatePayment)
 				payments.PATCH("/:id/paid", deps.AuthMW.RequireRole(writeRoles...), deps.Resources.MarkPaymentPaid)
+			}
+
+			dividends := protected.Group("/dividends")
+			{
+				dividends.GET("", deps.Resources.ListDividends)
+				dividends.GET("/stats", deps.Resources.GetDividendStats)
+				dividends.GET("/banks", deps.Resources.ListDividendBanks)
+				dividends.POST("/generate-pending", deps.AuthMW.RequireRole(writeRoles...), deps.Resources.GeneratePendingDividends)
+				dividends.POST("", deps.AuthMW.RequireRole(writeRoles...), deps.Resources.CreateDividend)
+				dividends.PATCH("/:id/paid", deps.AuthMW.RequireRole(writeRoles...), deps.Resources.MarkDividendPaid)
+				dividends.PATCH("/:id", deps.AuthMW.RequireRole(writeRoles...), deps.Resources.UpdateDividend)
 			}
 
 			crm := protected.Group("/crm/contacts")
@@ -148,6 +162,18 @@ func NewRouter(deps Deps) *Router {
 				notifications.POST("", deps.AuthMW.RequireRole(writeRoles...), deps.Resources.CreateNotification)
 				notifications.PATCH("/:id/status", deps.AuthMW.RequireRole(writeRoles...), deps.Resources.UpdateNotificationStatus)
 				notifications.DELETE("/:id", deps.AuthMW.RequireRole(writeRoles...), deps.Resources.DeleteNotification)
+				notifications.POST("/email/test", deps.AuthMW.RequireRole(writeRoles...), deps.EmailNotify.SendTestEmail)
+				notifications.POST("/email/send", deps.AuthMW.RequireRole(writeRoles...), deps.EmailNotify.SendEmailNotifications)
+			}
+
+			emailRecipients := protected.Group("/email-recipients")
+			{
+				emailRecipients.GET("", deps.EmailNotify.ListRecipients)
+				emailRecipients.GET("/types", deps.EmailNotify.ListNotificationTypes)
+				emailRecipients.GET("/smtp-status", deps.EmailNotify.GetSMTPStatus)
+				emailRecipients.POST("", deps.AuthMW.RequireRole(writeRoles...), deps.EmailNotify.CreateRecipient)
+				emailRecipients.PATCH("/:id", deps.AuthMW.RequireRole(writeRoles...), deps.EmailNotify.UpdateRecipient)
+				emailRecipients.DELETE("/:id", deps.AuthMW.RequireRole(writeRoles...), deps.EmailNotify.DeleteRecipient)
 			}
 
 			protected.PATCH("/settings/preferences", deps.Resources.UpdatePreferences)

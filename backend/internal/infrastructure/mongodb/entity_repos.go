@@ -12,6 +12,7 @@ import (
 	domainmort "github.com/richard/my-rent-go/internal/domain/mortgage"
 	domainnotif "github.com/richard/my-rent-go/internal/domain/notification"
 	domainpay "github.com/richard/my-rent-go/internal/domain/payment"
+	"github.com/richard/my-rent-go/internal/domain/shared"
 	domainrem "github.com/richard/my-rent-go/internal/domain/reminder"
 	domaintenant "github.com/richard/my-rent-go/internal/domain/tenant"
 	domainticket "github.com/richard/my-rent-go/internal/domain/ticket"
@@ -206,12 +207,58 @@ func (r *PaymentRepo) RentExistsForLeaseMonth(ctx context.Context, orgID, leaseI
 	return count > 0, nil
 }
 
-func (r *PaymentRepo) List(ctx context.Context, orgID string, page, limit int, status string) ([]domainpay.Payment, int64, error) {
-	f := bson.M{}
-	if status != "" {
-		f["status"] = status
+type PaymentListFilter struct {
+	Type       string
+	Status     string
+	PropertyID string
+	BankName   string
+	Month      string // YYYY-MM
+}
+
+func (r *PaymentRepo) buildListFilter(f PaymentListFilter) bson.M {
+	query := bson.M{}
+	if f.Type != "" {
+		query["type"] = f.Type
 	}
-	return listByOrg[domainpay.Payment](ctx, r.col, orgID, ListParams{Page: page, Limit: limit, Filter: f, Sort: bson.D{{Key: "due_date", Value: -1}}})
+	if f.Status != "" {
+		query["status"] = f.Status
+	}
+	if f.PropertyID != "" {
+		query["property_id"] = f.PropertyID
+	}
+	if f.BankName != "" {
+		query["bank_name"] = f.BankName
+	}
+	if f.Month != "" {
+		if parsed, err := time.Parse("2006-01", f.Month); err == nil {
+			start := time.Date(parsed.Year(), parsed.Month(), 1, 0, 0, 0, 0, time.UTC)
+			end := start.AddDate(0, 1, 0)
+			query["due_date"] = bson.M{"$gte": start, "$lt": end}
+		}
+	}
+	return query
+}
+
+func (r *PaymentRepo) List(ctx context.Context, orgID string, page, limit int, status string) ([]domainpay.Payment, int64, error) {
+	return r.ListFiltered(ctx, orgID, page, limit, PaymentListFilter{Status: status})
+}
+
+func (r *PaymentRepo) ListFiltered(ctx context.Context, orgID string, page, limit int, f PaymentListFilter) ([]domainpay.Payment, int64, error) {
+	return listByOrg[domainpay.Payment](ctx, r.col, orgID, ListParams{Page: page, Limit: limit, Filter: r.buildListFilter(f), Sort: bson.D{{Key: "due_date", Value: -1}}})
+}
+
+func (r *PaymentRepo) DividendExistsForPropertyMonth(ctx context.Context, orgID, propertyID string, monthStart, monthEnd time.Time) (bool, error) {
+	count, err := r.col.CountDocuments(ctx, bson.M{
+		"organization_id": orgID,
+		"property_id":     propertyID,
+		"type":            domainpay.TypeDividend,
+		"status":          bson.M{"$in": []domainpay.Status{domainpay.StatusPending, domainpay.StatusPaid, domainpay.StatusOverdue}},
+		"due_date":        bson.M{"$gte": monthStart, "$lt": monthEnd},
+	})
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (r *PaymentRepo) MarkPaid(ctx context.Context, orgID, id string) error {
@@ -219,7 +266,25 @@ func (r *PaymentRepo) MarkPaid(ctx context.Context, orgID, id string) error {
 	return patchByOrg(ctx, r.col, orgID, id, bson.M{"status": domainpay.StatusPaid, "paid_date": now, "updated_at": now})
 }
 
-func (r *PaymentRepo) MonthlyTotals(ctx context.Context, orgID string) (income, expenses float64, err error) {
+func (r *PaymentRepo) FindByID(ctx context.Context, orgID, id string) (*domainpay.Payment, error) {
+	var p domainpay.Payment
+	err := r.col.FindOne(ctx, bson.M{"_id": id, "organization_id": orgID}).Decode(&p)
+	if err == mongo.ErrNoDocuments {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (r *PaymentRepo) UpdateDividend(ctx context.Context, orgID string, p *domainpay.Payment) error {
+	now := time.Now().UTC()
+	p.UpdatedAt = now
+	return replaceByOrg(ctx, r.col, orgID, p.ID, p)
+}
+
+func (r *PaymentRepo) MonthlyTotals(ctx context.Context, orgID string, ufRate float64) (income, expenses, expensesUF float64, err error) {
 	now := time.Now().UTC()
 	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
@@ -231,32 +296,174 @@ func (r *PaymentRepo) MonthlyTotals(ctx context.Context, orgID string) (income, 
 			"paid_date":       bson.M{"$gte": start, "$lt": end},
 		}}},
 		{{Key: "$group", Value: bson.M{
-			"_id":   "$type",
+			"_id": bson.M{
+				"type":     "$type",
+				"currency": bson.M{"$toUpper": bson.M{"$ifNull": bson.A{"$amount.currency", "CLP"}}},
+			},
 			"total": bson.M{"$sum": "$amount.amount"},
 		}}},
 	}
 	cursor, err := r.col.Aggregate(ctx, pipeline)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
+	}
+	defer cursor.Close(ctx)
+
+	var rows []struct {
+		ID struct {
+			Type     string `bson:"type"`
+			Currency string `bson:"currency"`
+		} `bson:"_id"`
+		Total float64 `bson:"total"`
+	}
+	if err := cursor.All(ctx, &rows); err != nil {
+		return 0, 0, 0, err
+	}
+	for _, row := range rows {
+		clp := shared.AmountInCLP(row.Total, row.ID.Currency, ufRate)
+		switch domainpay.Type(row.ID.Type) {
+		case domainpay.TypeRent, domainpay.TypeDeposit:
+			income += clp
+		default:
+			expenses += clp
+			if row.ID.Currency == "UF" {
+				expensesUF += row.Total
+			}
+		}
+	}
+	return income, expenses, expensesUF, nil
+}
+
+type DividendMonthStats struct {
+	Month         string
+	PaidTotalUF   float64
+	PendingTotalUF float64
+	PaidCount     int64
+	PendingCount  int64
+}
+
+type BankDividendTotal struct {
+	BankName      string
+	BankID        string
+	PendingUF     float64
+	PaidUF        float64
+	PropertyCount int
+}
+
+func (r *PaymentRepo) DividendMonthStats(ctx context.Context, orgID, month string) (DividendMonthStats, error) {
+	stats := DividendMonthStats{Month: month}
+	parsed, err := time.Parse("2006-01", month)
+	if err != nil {
+		return stats, err
+	}
+	start := time.Date(parsed.Year(), parsed.Month(), 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.M{
+			"organization_id": orgID,
+			"type":            domainpay.TypeDividend,
+			"due_date":        bson.M{"$gte": start, "$lt": end},
+		}}},
+		{{Key: "$group", Value: bson.M{
+			"_id":   "$status",
+			"count": bson.M{"$sum": 1},
+			"total": bson.M{"$sum": "$amount.amount"},
+		}}},
+	}
+	cursor, err := r.col.Aggregate(ctx, pipeline)
+	if err != nil {
+		return stats, err
 	}
 	defer cursor.Close(ctx)
 
 	var rows []struct {
 		ID    string  `bson:"_id"`
+		Count int64   `bson:"count"`
 		Total float64 `bson:"total"`
 	}
 	if err := cursor.All(ctx, &rows); err != nil {
-		return 0, 0, err
+		return stats, err
 	}
 	for _, row := range rows {
-		switch domainpay.Type(row.ID) {
-		case domainpay.TypeRent, domainpay.TypeDeposit:
-			income += row.Total
-		default:
-			expenses += row.Total
+		switch domainpay.Status(row.ID) {
+		case domainpay.StatusPaid:
+			stats.PaidCount = row.Count
+			stats.PaidTotalUF = row.Total
+		case domainpay.StatusPending, domainpay.StatusOverdue:
+			stats.PendingCount += row.Count
+			stats.PendingTotalUF += row.Total
 		}
 	}
-	return income, expenses, nil
+	return stats, nil
+}
+
+func (r *PaymentRepo) DividendsByBank(ctx context.Context, orgID, month string) ([]BankDividendTotal, error) {
+	parsed, err := time.Parse("2006-01", month)
+	if err != nil {
+		return nil, err
+	}
+	start := time.Date(parsed.Year(), parsed.Month(), 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.M{
+			"organization_id": orgID,
+			"type":            domainpay.TypeDividend,
+			"due_date":        bson.M{"$gte": start, "$lt": end},
+		}}},
+		{{Key: "$group", Value: bson.M{
+			"_id": bson.M{
+				"bank_name": bson.M{"$ifNull": bson.A{"$bank_name", "Sin banco"}},
+				"bank_id":   bson.M{"$ifNull": bson.A{"$bank_id", ""}},
+			},
+			"pending_uf": bson.M{"$sum": bson.M{
+				"$cond": bson.A{
+					bson.M{"$in": bson.A{"$status", bson.A{"pending", "overdue"}}},
+					"$amount.amount",
+					0,
+				},
+			}},
+			"paid_uf": bson.M{"$sum": bson.M{
+				"$cond": bson.A{
+					bson.M{"$eq": bson.A{"$status", "paid"}},
+					"$amount.amount",
+					0,
+				},
+			}},
+			"properties": bson.M{"$addToSet": "$property_id"},
+		}}},
+		{{Key: "$sort", Value: bson.M{"_id.bank_name": 1}}},
+	}
+	cursor, err := r.col.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var rows []struct {
+		ID struct {
+			BankName string `bson:"bank_name"`
+			BankID   string `bson:"bank_id"`
+		} `bson:"_id"`
+		PendingUF  float64    `bson:"pending_uf"`
+		PaidUF     float64    `bson:"paid_uf"`
+		Properties []string   `bson:"properties"`
+	}
+	if err := cursor.All(ctx, &rows); err != nil {
+		return nil, err
+	}
+	result := make([]BankDividendTotal, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, BankDividendTotal{
+			BankName:      row.ID.BankName,
+			BankID:        row.ID.BankID,
+			PendingUF:     row.PendingUF,
+			PaidUF:        row.PaidUF,
+			PropertyCount: len(row.Properties),
+		})
+	}
+	return result, nil
 }
 
 type ContactRepo struct{ col *mongo.Collection }

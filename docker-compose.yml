@@ -48,6 +48,14 @@ services:
     depends_on:
       - api
 
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: myrent-mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
 volumes:
   mongodb_data:
   api_storage:

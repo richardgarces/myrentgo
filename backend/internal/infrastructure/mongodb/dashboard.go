@@ -10,6 +10,7 @@ import (
 	"github.com/richard/my-rent-go/internal/application/dashboard"
 	domainlease "github.com/richard/my-rent-go/internal/domain/lease"
 	domainprop "github.com/richard/my-rent-go/internal/domain/property"
+	"github.com/richard/my-rent-go/internal/infrastructure/mindicador"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/sync/errgroup"
@@ -26,10 +27,22 @@ type CalendarEvent struct {
 
 type DashboardRepo struct {
 	db *Client
+	uf *mindicador.UFProvider
 }
 
-func NewDashboardRepo(db *Client) *DashboardRepo {
-	return &DashboardRepo{db: db}
+func NewDashboardRepo(db *Client, uf *mindicador.UFProvider) *DashboardRepo {
+	return &DashboardRepo{db: db, uf: uf}
+}
+
+func (r *DashboardRepo) ufRate(ctx context.Context) float64 {
+	if r.uf == nil {
+		return 0
+	}
+	v, err := r.uf.GetUF(ctx)
+	if err != nil || v == nil || v.Value <= 0 {
+		return 0
+	}
+	return v.Value
 }
 
 func (r *DashboardRepo) GetStats(ctx context.Context, orgID string) (*dashboard.DashboardResult, error) {
@@ -46,12 +59,18 @@ func (r *DashboardRepo) GetStats(ctx context.Context, orgID string) (*dashboard.
 		rentMonth                                          string
 		rentPaidTotal, rentPendingTotal                    float64
 		rentPaidCount, rentPendingCount                    int64
-		income, expenses                                   float64
+		income, expenses, expensesUF                       float64
+		ufRate                                             float64
 		activeLeases                                       int
 		totalMonthlyRent                                   float64
 		totalValueUF                                       float64
 		totalDebtUF                                        float64
+		totalOriginalLoanUF                                float64
 		totalMortgageUF                                    float64
+		dividendMonth                                      string
+		dividendPaidUF, dividendPendingUF                  float64
+		dividendPaidCount, dividendPendingCount            int64
+		dividendsByBank                                    []dashboard.BankDividendItem
 		propertiesByType                                   []dashboard.PropertyTypeCount
 		expirations                                        []dashboard.ExpirationItem
 		profitability                                      []dashboard.PropertyProfit
@@ -59,6 +78,7 @@ func (r *DashboardRepo) GetStats(ctx context.Context, orgID string) (*dashboard.
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
+	ufRate = r.ufRate(gctx)
 
 	g.Go(func() error {
 		total, rentable = r.propertyCounts(gctx, orgID)
@@ -87,7 +107,7 @@ func (r *DashboardRepo) GetStats(ctx context.Context, orgID string) (*dashboard.
 	g.Go(func() error {
 		payRepo := NewPaymentRepo(r.db)
 		var err error
-		income, expenses, err = payRepo.MonthlyTotals(gctx, orgID)
+		income, expenses, expensesUF, err = payRepo.MonthlyTotals(gctx, orgID, ufRate)
 		return err
 	})
 
@@ -97,7 +117,37 @@ func (r *DashboardRepo) GetStats(ctx context.Context, orgID string) (*dashboard.
 	})
 
 	g.Go(func() error {
-		totalValueUF, totalDebtUF, totalMortgageUF = r.propertyFinancialTotals(gctx, orgID)
+		totalValueUF, totalDebtUF, totalOriginalLoanUF, totalMortgageUF = r.propertyFinancialTotals(gctx, orgID)
+		return nil
+	})
+
+	g.Go(func() error {
+		now := time.Now().UTC()
+		month := now.Format("2006-01")
+		payRepo := NewPaymentRepo(r.db)
+		stats, err := payRepo.DividendMonthStats(gctx, orgID, month)
+		if err != nil {
+			return err
+		}
+		dividendMonth = stats.Month
+		dividendPaidUF = stats.PaidTotalUF
+		dividendPendingUF = stats.PendingTotalUF
+		dividendPaidCount = stats.PaidCount
+		dividendPendingCount = stats.PendingCount
+		banks, err := payRepo.DividendsByBank(gctx, orgID, month)
+		if err != nil {
+			return err
+		}
+		dividendsByBank = make([]dashboard.BankDividendItem, len(banks))
+		for i, b := range banks {
+			dividendsByBank[i] = dashboard.BankDividendItem{
+				BankName:      b.BankName,
+				BankID:        b.BankID,
+				PendingUF:     b.PendingUF,
+				PaidUF:        b.PaidUF,
+				PropertyCount: b.PropertyCount,
+			}
+		}
 		return nil
 	})
 
@@ -112,7 +162,7 @@ func (r *DashboardRepo) GetStats(ctx context.Context, orgID string) (*dashboard.
 	})
 
 	g.Go(func() error {
-		profitability = r.profitabilityByProperty(gctx, orgID)
+		profitability = r.profitabilityByProperty(gctx, orgID, ufRate)
 		return nil
 	})
 
@@ -135,6 +185,7 @@ func (r *DashboardRepo) GetStats(ctx context.Context, orgID string) (*dashboard.
 	result.OccupancyRate = occupancy
 	result.MonthlyIncome = income
 	result.MonthlyExpenses = expenses
+	result.MonthlyExpensesUF = expensesUF
 	result.NetCashFlow = income - expenses
 	result.OverduePayments = int(overdue)
 	result.PendingPaymentsCount = int(pendingCount)
@@ -149,7 +200,14 @@ func (r *DashboardRepo) GetStats(ctx context.Context, orgID string) (*dashboard.
 	result.TotalMonthlyRent = totalMonthlyRent
 	result.TotalValueUF = totalValueUF
 	result.TotalDebtUF = totalDebtUF
+	result.TotalOriginalLoanUF = totalOriginalLoanUF
 	result.TotalMonthlyMortgageUF = totalMortgageUF
+	result.DividendMonth = dividendMonth
+	result.TotalDividendPaidUF = dividendPaidUF
+	result.TotalDividendPendingUF = dividendPendingUF
+	result.TotalDividendPaidCount = int(dividendPaidCount)
+	result.TotalDividendPendingCount = int(dividendPendingCount)
+	result.DividendsByBank = dividendsByBank
 	result.PropertiesByType = propertiesByType
 	result.UpcomingExpirations = expirations
 	result.Profitability = profitability
@@ -482,13 +540,14 @@ func (r *DashboardRepo) activeLeaseTotals(ctx context.Context, orgID string) (co
 	return rows[0].Count, rows[0].TotalRent
 }
 
-func (r *DashboardRepo) propertyFinancialTotals(ctx context.Context, orgID string) (valueUF, debtUF, mortgageUF float64) {
+func (r *DashboardRepo) propertyFinancialTotals(ctx context.Context, orgID string) (valueUF, debtUF, originalLoanUF, mortgageUF float64) {
 	pipeline := bson.A{
 		bson.M{"$match": bson.M{"organization_id": orgID}},
 		bson.M{"$group": bson.M{
 			"_id": nil,
 			"total_value_uf": bson.M{"$sum": bson.M{"$ifNull": bson.A{"$financials.value_uf", 0}}},
 			"total_debt_uf": bson.M{"$sum": bson.M{"$ifNull": bson.A{"$financials.debt_uf", 0}}},
+			"total_original_loan_uf": bson.M{"$sum": bson.M{"$ifNull": bson.A{"$financials.original_loan_uf", 0}}},
 			"total_mortgage_uf": bson.M{"$sum": bson.M{"$ifNull": bson.A{
 				"$financials.monthly_mortgage_uf",
 				bson.M{"$ifNull": bson.A{"$financials.monthly_mortgage.amount", 0}},
@@ -497,18 +556,19 @@ func (r *DashboardRepo) propertyFinancialTotals(ctx context.Context, orgID strin
 	}
 	cur, err := r.db.Collection("properties").Aggregate(ctx, pipeline)
 	if err != nil {
-		return 0, 0, 0
+		return 0, 0, 0, 0
 	}
 	defer cur.Close(ctx)
 	var rows []struct {
-		TotalValueUF    float64 `bson:"total_value_uf"`
-		TotalDebtUF     float64 `bson:"total_debt_uf"`
-		TotalMortgageUF float64 `bson:"total_mortgage_uf"`
+		TotalValueUF         float64 `bson:"total_value_uf"`
+		TotalDebtUF          float64 `bson:"total_debt_uf"`
+		TotalOriginalLoanUF  float64 `bson:"total_original_loan_uf"`
+		TotalMortgageUF      float64 `bson:"total_mortgage_uf"`
 	}
 	if err := cur.All(ctx, &rows); err != nil || len(rows) == 0 {
-		return 0, 0, 0
+		return 0, 0, 0, 0
 	}
-	return rows[0].TotalValueUF, rows[0].TotalDebtUF, rows[0].TotalMortgageUF
+	return rows[0].TotalValueUF, rows[0].TotalDebtUF, rows[0].TotalOriginalLoanUF, rows[0].TotalMortgageUF
 }
 
 func (r *DashboardRepo) propertiesByType(ctx context.Context, orgID string) []dashboard.PropertyTypeCount {
@@ -569,7 +629,14 @@ func (r *DashboardRepo) upcomingLeases(ctx context.Context, orgID string) []dash
 	return items
 }
 
-func (r *DashboardRepo) profitabilityByProperty(ctx context.Context, orgID string) []dashboard.PropertyProfit {
+func currencyIsUF() bson.M {
+	return bson.M{"$eq": bson.A{
+		bson.M{"$toUpper": bson.M{"$ifNull": bson.A{"$amount.currency", "CLP"}}},
+		"UF",
+	}}
+}
+
+func (r *DashboardRepo) profitabilityByProperty(ctx context.Context, orgID string, ufRate float64) []dashboard.PropertyProfit {
 	pipeline := bson.A{
 		bson.M{"$match": bson.M{
 			"organization_id": orgID,
@@ -578,23 +645,46 @@ func (r *DashboardRepo) profitabilityByProperty(ctx context.Context, orgID strin
 		}},
 		bson.M{"$group": bson.M{
 			"_id": "$property_id",
-			"income": bson.M{"$sum": bson.M{"$cond": bson.A{
-				bson.M{"$eq": bson.A{"$type", "rent"}},
+			"income_clp": bson.M{"$sum": bson.M{"$cond": bson.A{
+				bson.M{"$and": bson.A{
+					bson.M{"$eq": bson.A{"$type", "rent"}},
+					bson.M{"$not": currencyIsUF()},
+				}},
 				"$amount.amount",
 				0,
 			}}},
-			"expenses": bson.M{"$sum": bson.M{"$cond": bson.A{
+			"income_uf": bson.M{"$sum": bson.M{"$cond": bson.A{
+				bson.M{"$and": bson.A{
+					bson.M{"$eq": bson.A{"$type", "rent"}},
+					currencyIsUF(),
+				}},
+				"$amount.amount",
+				0,
+			}}},
+			"expenses_clp": bson.M{"$sum": bson.M{"$cond": bson.A{
 				bson.M{"$and": bson.A{
 					bson.M{"$ne": bson.A{"$type", "rent"}},
 					bson.M{"$ne": bson.A{"$type", "deposit"}},
+					bson.M{"$not": currencyIsUF()},
+				}},
+				"$amount.amount",
+				0,
+			}}},
+			"expenses_uf": bson.M{"$sum": bson.M{"$cond": bson.A{
+				bson.M{"$and": bson.A{
+					bson.M{"$ne": bson.A{"$type", "rent"}},
+					bson.M{"$ne": bson.A{"$type", "deposit"}},
+					currencyIsUF(),
 				}},
 				"$amount.amount",
 				0,
 			}}},
 		}},
 		bson.M{"$match": bson.M{"$or": bson.A{
-			bson.M{"income": bson.M{"$gt": 0}},
-			bson.M{"expenses": bson.M{"$gt": 0}},
+			bson.M{"income_clp": bson.M{"$gt": 0}},
+			bson.M{"income_uf": bson.M{"$gt": 0}},
+			bson.M{"expenses_clp": bson.M{"$gt": 0}},
+			bson.M{"expenses_uf": bson.M{"$gt": 0}},
 		}}},
 		bson.M{"$lookup": bson.M{
 			"from":         "properties",
@@ -612,10 +702,12 @@ func (r *DashboardRepo) profitabilityByProperty(ctx context.Context, orgID strin
 	defer cur.Close(ctx)
 
 	var rows []struct {
-		PropertyID string  `bson:"_id"`
-		Income     float64 `bson:"income"`
-		Expenses   float64 `bson:"expenses"`
-		Property   struct {
+		PropertyID  string  `bson:"_id"`
+		IncomeCLP   float64 `bson:"income_clp"`
+		IncomeUF    float64 `bson:"income_uf"`
+		ExpensesCLP float64 `bson:"expenses_clp"`
+		ExpensesUF  float64 `bson:"expenses_uf"`
+		Property    struct {
 			Name string `bson:"name"`
 		} `bson:"property"`
 	}
@@ -625,10 +717,18 @@ func (r *DashboardRepo) profitabilityByProperty(ctx context.Context, orgID strin
 
 	items := make([]dashboard.PropertyProfit, 0, len(rows))
 	for _, row := range rows {
-		profit := row.Income - row.Expenses
+		income := row.IncomeCLP
+		if ufRate > 0 {
+			income += row.IncomeUF * ufRate
+		}
+		expenses := row.ExpensesCLP
+		if ufRate > 0 {
+			expenses += row.ExpensesUF * ufRate
+		}
+		profit := income - expenses
 		roi := 0.0
-		if row.Expenses > 0 {
-			roi = profit / row.Expenses * 100
+		if expenses > 0 {
+			roi = profit / expenses * 100
 		}
 		name := row.Property.Name
 		if name == "" {
@@ -636,7 +736,7 @@ func (r *DashboardRepo) profitabilityByProperty(ctx context.Context, orgID strin
 		}
 		items = append(items, dashboard.PropertyProfit{
 			PropertyID: row.PropertyID, PropertyName: name,
-			Income: row.Income, Expenses: row.Expenses, Profit: profit, ROI: roi,
+			Income: income, Expenses: expenses, ExpensesUF: row.ExpensesUF, Profit: profit, ROI: roi,
 		})
 	}
 	return items

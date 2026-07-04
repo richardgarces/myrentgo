@@ -1,9 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Link } from 'react-router-dom'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { EmptyState, LoadingSkeleton, PageHeader } from '@/components/ui/page'
 import { api } from '@/lib/api'
-import { formatCurrency } from '@/lib/utils'
+import { formatCurrency, formatMonthLabel, formatUF } from '@/lib/utils'
+import { UFIndicatorNote, UFWithCLP } from '@/components/UFWithCLP'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 export function FinancePage() {
@@ -35,13 +37,48 @@ export function FinancePage() {
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Gastos mes</CardTitle></CardHeader>
-          <CardContent><p className="text-2xl font-bold">{formatCurrency(dash?.monthly_expenses ?? 0)}</p></CardContent>
+          <CardContent>
+            <p className="text-2xl font-bold">{formatCurrency(dash?.monthly_expenses ?? 0)}</p>
+            {(dash?.monthly_expenses_uf ?? 0) > 0 && (
+              <p className="text-xs text-muted-foreground mt-1">{formatUF(dash?.monthly_expenses_uf ?? 0)}</p>
+            )}
+          </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Flujo neto</CardTitle></CardHeader>
           <CardContent><p className="text-2xl font-bold">{formatCurrency(dash?.net_cash_flow ?? 0)}</p></CardContent>
         </Card>
       </div>
+
+      {(dash?.total_monthly_mortgage_uf ?? 0) > 0 && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-base">Dividendos hipotecarios</CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">
+                {dash?.dividend_month ? formatMonthLabel(dash.dividend_month) : 'Mes actual'}
+              </p>
+            </div>
+            <Link to="/dividends" className="text-sm text-primary hover:underline">Ver módulo →</Link>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div>
+                <p className="text-sm text-muted-foreground">Total mensual UF</p>
+                <UFWithCLP amount={dash?.total_monthly_mortgage_uf ?? 0} valueClassName="text-xl font-bold" />
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Pagado mes</p>
+                <UFWithCLP amount={dash?.total_dividend_paid_uf ?? 0} valueClassName="text-xl font-bold text-emerald-600" />
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Pendiente mes</p>
+                <UFWithCLP amount={dash?.total_dividend_pending_uf ?? 0} valueClassName="text-xl font-bold text-amber-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader><CardTitle className="text-base">Flujo de caja</CardTitle></CardHeader>
@@ -55,6 +92,9 @@ export function FinancePage() {
               <Bar dataKey="value" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
+          {(dash?.monthly_expenses_uf ?? 0) > 0 && (
+            <UFIndicatorNote help="Los gastos en UF se convierten a pesos con la UF del día para el flujo de caja y la rentabilidad." />
+          )}
         </CardContent>
       </Card>
 
@@ -79,7 +119,12 @@ export function FinancePage() {
                   <tr key={p.property_id} className="border-b">
                     <td className="p-4">{p.property_name}</td>
                     <td className="p-4">{formatCurrency(p.income)}</td>
-                    <td className="p-4">{formatCurrency(p.expenses)}</td>
+                    <td className="p-4">
+                      <div>{formatCurrency(p.expenses)}</div>
+                      {(p.expenses_uf ?? 0) > 0 && (
+                        <p className="text-xs text-muted-foreground mt-0.5">{formatUF(p.expenses_uf ?? 0)}</p>
+                      )}
+                    </td>
                     <td className="p-4 font-medium">{formatCurrency(p.profit)}</td>
                     <td className="p-4">{p.roi.toFixed(1)}%</td>
                   </tr>

@@ -2,6 +2,7 @@ package property
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	domain "github.com/richard/my-rent-go/internal/domain/property"
@@ -25,11 +26,16 @@ type PropertyWritableFields struct {
 	WarehousePropertyID string `json:"warehouse_property_id"`
 	ValueUF           float64 `json:"value_uf"`
 	DebtUF            float64 `json:"debt_uf"`
+	OriginalLoanUF    float64 `json:"original_loan_uf"`
 	MonthlyMortgageUF float64 `json:"monthly_mortgage_uf"`
 	LoanTermYears     int     `json:"loan_term_years"`
+	InstallmentsPaid  int     `json:"installments_paid"`
 	InterestRate      float64 `json:"interest_rate"`
 	BankName          string  `json:"bank_name"`
+	CreditNumber      string  `json:"credit_number"`
 	PaymentStartDate  string  `json:"payment_start_date"`
+	PacEnabled        bool    `json:"pac_enabled"`
+	PaymentBank       string  `json:"payment_bank"`
 	UnitNumber        string  `json:"unit_number"`
 	Floor             string  `json:"floor"`
 	ConciergeEmail       string `json:"concierge_email"`
@@ -43,9 +49,18 @@ type PropertyWritableFields struct {
 	WaterClientCode      string       `json:"water_client_code"`
 	ElectricityCompany   string       `json:"electricity_company"`
 	ElectricityClientCode string      `json:"electricity_client_code"`
-	GasCompany           string       `json:"gas_company"`
-	GasClientCode        string       `json:"gas_client_code"`
-	Photos               []PhotoInput `json:"photos"`
+	GasCompany                  string       `json:"gas_company"`
+	GasClientCode               string       `json:"gas_client_code"`
+	FireInsuranceCompany          string       `json:"fire_insurance_company"`
+	FireInsuranceAmountUF         float64      `json:"fire_insurance_amount_uf"`
+	FireInsurancePolicyNumber     string       `json:"fire_insurance_policy_number"`
+	EarthquakeInsuranceCompany    string       `json:"earthquake_insurance_company"`
+	EarthquakeInsuranceAmountUF   float64      `json:"earthquake_insurance_amount_uf"`
+	EarthquakeInsurancePolicyNumber string     `json:"earthquake_insurance_policy_number"`
+	DesgravamenInsuranceCompany       string   `json:"desgravamen_insurance_company"`
+	DesgravamenInsuranceAmountUF      float64  `json:"desgravamen_insurance_amount_uf"`
+	DesgravamenInsurancePolicyNumber  string   `json:"desgravamen_insurance_policy_number"`
+	Photos                      []PhotoInput `json:"photos"`
 }
 
 type PhotoInput struct {
@@ -128,10 +143,15 @@ func applyPropertyFields(p *domain.Property, fields PropertyWritableFields) {
 	}
 	p.Financials.ValueUF = fields.ValueUF
 	p.Financials.DebtUF = fields.DebtUF
+	p.Financials.OriginalLoanUF = fields.OriginalLoanUF
 	p.Financials.MonthlyMortgageUF = fields.MonthlyMortgageUF
 	p.Financials.LoanTermYears = fields.LoanTermYears
+	p.Financials.InstallmentsPaid = fields.InstallmentsPaid
 	p.Financials.InterestRate = fields.InterestRate
 	p.Financials.BankName = fields.BankName
+	p.Financials.CreditNumber = fields.CreditNumber
+	p.Financials.PacEnabled = fields.PacEnabled
+	p.Financials.PaymentBank = fields.PaymentBank
 	if fields.PaymentStartDate != "" {
 		if t, err := time.Parse("2006-01-02", fields.PaymentStartDate); err == nil {
 			p.Financials.PaymentStartDate = &t
@@ -149,6 +169,20 @@ func applyPropertyFields(p *domain.Property, fields PropertyWritableFields) {
 		},
 		Gas: domain.UtilityAccount{
 			Company: fields.GasCompany, ClientCode: fields.GasClientCode,
+		},
+	}
+	p.Insurance = domain.PropertyInsurance{
+		Fire: domain.InsurancePolicy{
+			Company: fields.FireInsuranceCompany, AmountUF: fields.FireInsuranceAmountUF,
+			PolicyNumber: fields.FireInsurancePolicyNumber,
+		},
+		Earthquake: domain.InsurancePolicy{
+			Company: fields.EarthquakeInsuranceCompany, AmountUF: fields.EarthquakeInsuranceAmountUF,
+			PolicyNumber: fields.EarthquakeInsurancePolicyNumber,
+		},
+		Desgravamen: domain.InsurancePolicy{
+			Company: fields.DesgravamenInsuranceCompany, AmountUF: fields.DesgravamenInsuranceAmountUF,
+			PolicyNumber: fields.DesgravamenInsurancePolicyNumber,
 		},
 	}
 	if fields.Photos != nil {
@@ -177,6 +211,7 @@ func applyPropertyFields(p *domain.Property, fields PropertyWritableFields) {
 		p.Floor = ""
 		p.Concierge = domain.ConciergeInfo{}
 		p.UtilityAccounts = domain.UtilityAccounts{}
+		p.Insurance = domain.PropertyInsurance{}
 	case string(domain.TypeParking):
 		p.ParkingPropertyID = ""
 		p.WarehousePropertyID = ""
@@ -184,6 +219,7 @@ func applyPropertyFields(p *domain.Property, fields PropertyWritableFields) {
 		p.Floor = ""
 		p.Concierge = domain.ConciergeInfo{}
 		p.UtilityAccounts = domain.UtilityAccounts{}
+		p.Insurance = domain.PropertyInsurance{}
 	default:
 		p.ParkingPropertyID = fields.ParkingPropertyID
 		p.WarehousePropertyID = ""
@@ -192,7 +228,23 @@ func applyPropertyFields(p *domain.Property, fields PropertyWritableFields) {
 	}
 }
 
+func validateMortgageFields(fields PropertyWritableFields) error {
+	if fields.InstallmentsPaid < 0 {
+		return fmt.Errorf("installments_paid cannot be negative")
+	}
+	if fields.InstallmentsPaid > 0 && fields.LoanTermYears > 0 {
+		max := fields.LoanTermYears * 12
+		if fields.InstallmentsPaid > max {
+			return fmt.Errorf("installments_paid cannot exceed %d (loan term in months)", max)
+		}
+	}
+	return nil
+}
+
 func (h *CreatePropertyHandler) Handle(ctx context.Context, cmd CreatePropertyCommand) (*domain.Property, error) {
+	if err := validateMortgageFields(cmd.PropertyWritableFields); err != nil {
+		return nil, err
+	}
 	p := domain.NewProperty(cmd.OrganizationID, cmd.Name, domain.Type(cmd.Type))
 	applyPropertyFields(p, cmd.PropertyWritableFields)
 	applyPurposeStatus(p, cmd.Purpose)
@@ -220,6 +272,9 @@ func (h *CreatePropertyHandler) Get(ctx context.Context, orgID, id string) (*dom
 }
 
 func (h *CreatePropertyHandler) Update(ctx context.Context, cmd UpdatePropertyCommand) (*domain.Property, error) {
+	if err := validateMortgageFields(cmd.PropertyWritableFields); err != nil {
+		return nil, err
+	}
 	p, err := h.repo.FindByID(ctx, cmd.OrganizationID, cmd.ID)
 	if err != nil {
 		return nil, err

@@ -3,6 +3,8 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -527,8 +529,11 @@ type createPaymentReq struct {
 	TenantID   string  `json:"tenant_id"`
 	Type       string  `json:"type" binding:"required"`
 	Amount     float64 `json:"amount" binding:"required"`
+	Currency   string  `json:"currency"`
 	DueDate    string  `json:"due_date" binding:"required"`
 	Notes      string  `json:"notes,omitempty"`
+	BankName   string  `json:"bank_name,omitempty"`
+	BankID     string  `json:"bank_id,omitempty"`
 }
 
 func (h *ResourcesHandler) CreatePayment(c *gin.Context) {
@@ -543,10 +548,16 @@ func (h *ResourcesHandler) CreatePayment(c *gin.Context) {
 		return
 	}
 	orgID := middleware.GetOrgID(c)
-	p := domainpay.NewPayment(orgID, domainpay.Type(req.Type), shared.NewMoney(req.Amount, "CLP"), due)
+	currency := req.Currency
+	if currency == "" {
+		currency = "CLP"
+	}
+	p := domainpay.NewPayment(orgID, domainpay.Type(req.Type), shared.NewMoney(req.Amount, currency), due)
 	p.PropertyID = req.PropertyID
 	p.LeaseID = req.LeaseID
 	p.TenantID = req.TenantID
+	p.BankName = req.BankName
+	p.BankID = req.BankID
 	if req.Type == string(domainpay.TypeDeposit) {
 		p.Notes = req.Notes
 	}
@@ -672,6 +683,433 @@ func (h *ResourcesHandler) GeneratePendingRentPayments(c *gin.Context) {
 		"month_already_generated": monthAlreadyGenerated,
 		"data":                    created,
 	})
+}
+
+func dividendDueDateForMonth(year int, month time.Month, paymentDay int) time.Time {
+	lastDay := time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
+	day := paymentDay
+	if day < 1 {
+		day = 5
+	}
+	if day > lastDay {
+		day = lastDay
+	}
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+}
+
+func paymentDayFromProperty(p domainprop.Property) int {
+	if p.Financials.PaymentStartDate != nil {
+		return p.Financials.PaymentStartDate.Day()
+	}
+	return 5
+}
+
+func (h *ResourcesHandler) resolveBankID(ctx context.Context, orgID, bankName string) string {
+	if bankName == "" {
+		return ""
+	}
+	contacts, _, err := h.contacts.List(ctx, orgID, 1, 200, string(domaincrm.TypeBank))
+	if err != nil {
+		return ""
+	}
+	lower := strings.ToLower(strings.TrimSpace(bankName))
+	for _, c := range contacts {
+		if strings.ToLower(strings.TrimSpace(c.Name)) == lower {
+			return c.ID
+		}
+	}
+	return ""
+}
+
+func paymentBankFromProperty(p domainprop.Property) string {
+	if p.Financials.PaymentBank != "" {
+		return p.Financials.PaymentBank
+	}
+	return p.Financials.BankName
+}
+
+func applyPropertyDividendDefaults(p *domainpay.Payment, prop *domainprop.Property) {
+	if prop == nil {
+		return
+	}
+	if p.BankName == "" {
+		p.BankName = prop.Financials.BankName
+	}
+	if p.PaymentBank == "" {
+		p.PaymentBank = paymentBankFromProperty(*prop)
+	}
+}
+
+// Dividends
+func (h *ResourcesHandler) ListDividends(c *gin.Context) {
+	orgID := middleware.GetOrgID(c)
+	page, limit := parsePageLimit(c)
+	filter := mongodb.PaymentListFilter{
+		Type:       string(domainpay.TypeDividend),
+		Status:     c.Query("status"),
+		PropertyID: c.Query("property_id"),
+		BankName:   c.Query("bank_name"),
+		Month:      c.Query("month"),
+	}
+	items, total, err := h.payments.ListFiltered(c.Request.Context(), orgID, page, limit, filter)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	listResponse(c, items, total, page, limit)
+}
+
+type createDividendReq struct {
+	PropertyID  string  `json:"property_id" binding:"required"`
+	BankID      string  `json:"bank_id"`
+	BankName    string  `json:"bank_name"`
+	PaymentBank string  `json:"payment_bank"`
+	PacEnabled  bool    `json:"pac_enabled"`
+	Amount      float64 `json:"amount" binding:"required"`
+	Currency    string  `json:"currency"`
+	DueDate     string  `json:"due_date" binding:"required"`
+	Notes       string  `json:"notes,omitempty"`
+}
+
+func (h *ResourcesHandler) CreateDividend(c *gin.Context) {
+	var req createDividendReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	due, err := time.Parse("2006-01-02", req.DueDate)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid due_date"})
+		return
+	}
+	currency := req.Currency
+	if currency == "" {
+		currency = "UF"
+	}
+	orgID := middleware.GetOrgID(c)
+	p := domainpay.NewPayment(orgID, domainpay.TypeDividend, shared.NewMoney(req.Amount, currency), due)
+	p.PropertyID = req.PropertyID
+	p.BankID = req.BankID
+	p.BankName = req.BankName
+	p.PaymentBank = req.PaymentBank
+	p.PacEnabled = req.PacEnabled
+	p.Notes = req.Notes
+	if req.PropertyID != "" {
+		if prop, _ := h.properties.FindByID(c.Request.Context(), orgID, req.PropertyID); prop != nil {
+			applyPropertyDividendDefaults(p, prop)
+			if p.BankID == "" {
+				p.BankID = h.resolveBankID(c.Request.Context(), orgID, p.BankName)
+			}
+		}
+	}
+	if p.BankID == "" && p.BankName != "" {
+		p.BankID = h.resolveBankID(c.Request.Context(), orgID, p.BankName)
+	}
+	if time.Now().After(due) && p.Status == domainpay.StatusPending {
+		p.Status = domainpay.StatusOverdue
+	}
+	if err := h.payments.Create(c.Request.Context(), p); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, p)
+}
+
+func (h *ResourcesHandler) MarkDividendPaid(c *gin.Context) {
+	h.MarkPaymentPaid(c)
+}
+
+type updateDividendReq struct {
+	BankID      *string `json:"bank_id"`
+	BankName    *string `json:"bank_name"`
+	PaymentBank *string `json:"payment_bank"`
+	PacEnabled  *bool   `json:"pac_enabled"`
+	Amount      *float64 `json:"amount"`
+	Currency    *string  `json:"currency"`
+	DueDate     *string  `json:"due_date"`
+	Notes       *string  `json:"notes"`
+}
+
+func (h *ResourcesHandler) UpdateDividend(c *gin.Context) {
+	var req updateDividendReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	orgID := middleware.GetOrgID(c)
+	p, err := h.payments.FindByID(c.Request.Context(), orgID, c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if p == nil || p.Type != domainpay.TypeDividend {
+		c.JSON(http.StatusNotFound, gin.H{"error": "dividend not found"})
+		return
+	}
+	if req.BankID != nil {
+		p.BankID = *req.BankID
+	}
+	if req.BankName != nil {
+		p.BankName = *req.BankName
+	}
+	if req.PaymentBank != nil {
+		p.PaymentBank = *req.PaymentBank
+	}
+	if req.PacEnabled != nil {
+		p.PacEnabled = *req.PacEnabled
+	}
+	if req.Amount != nil {
+		currency := p.Amount.Currency
+		if req.Currency != nil && *req.Currency != "" {
+			currency = *req.Currency
+		}
+		p.Amount = shared.NewMoney(*req.Amount, currency)
+	} else if req.Currency != nil && *req.Currency != "" {
+		p.Amount = shared.NewMoney(p.Amount.Amount, *req.Currency)
+	}
+	if req.DueDate != nil {
+		due, err := time.Parse("2006-01-02", *req.DueDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid due_date"})
+			return
+		}
+		p.DueDate = due
+		if p.Status == domainpay.StatusPending && time.Now().After(due) {
+			p.Status = domainpay.StatusOverdue
+		}
+	}
+	if req.Notes != nil {
+		p.Notes = *req.Notes
+	}
+	if p.BankID == "" && p.BankName != "" {
+		p.BankID = h.resolveBankID(c.Request.Context(), orgID, p.BankName)
+	}
+	if err := h.payments.UpdateDividend(c.Request.Context(), orgID, p); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, p)
+}
+
+func (h *ResourcesHandler) GeneratePendingDividends(c *gin.Context) {
+	var req generatePendingPaymentsReq
+	if err := c.ShouldBindJSON(&req); err != nil && c.Request.ContentLength > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	monthStr := req.Month
+	if monthStr == "" {
+		now := time.Now().UTC()
+		monthStr = now.Format("2006-01")
+	}
+	parsed, err := time.Parse("2006-01", monthStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid month, use YYYY-MM"})
+		return
+	}
+
+	monthStart := time.Date(parsed.Year(), parsed.Month(), 1, 0, 0, 0, 0, time.UTC)
+	monthEnd := monthStart.AddDate(0, 1, 0)
+
+	orgID := middleware.GetOrgID(c)
+	properties, err := h.properties.ListWithMortgage(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	var toCreate []*domainpay.Payment
+	skipped := 0
+	eligible := 0
+	now := time.Now().UTC()
+
+	for _, prop := range properties {
+		if prop.Financials.MonthlyMortgageUF <= 0 {
+			skipped++
+			continue
+		}
+		eligible++
+		exists, err := h.payments.DividendExistsForPropertyMonth(c.Request.Context(), orgID, prop.ID, monthStart, monthEnd)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if exists {
+			skipped++
+			continue
+		}
+
+		due := dividendDueDateForMonth(parsed.Year(), parsed.Month(), paymentDayFromProperty(prop))
+		p := domainpay.NewPayment(orgID, domainpay.TypeDividend, shared.NewMoney(prop.Financials.MonthlyMortgageUF, "UF"), due)
+		p.PropertyID = prop.ID
+		p.BankName = prop.Financials.BankName
+		p.PaymentBank = paymentBankFromProperty(prop)
+		p.PacEnabled = prop.Financials.PacEnabled
+		p.BankID = h.resolveBankID(c.Request.Context(), orgID, p.BankName)
+		if now.After(due) && p.Status == domainpay.StatusPending {
+			p.Status = domainpay.StatusOverdue
+		}
+		toCreate = append(toCreate, p)
+	}
+
+	monthAlreadyGenerated := eligible > 0 && len(toCreate) == 0
+
+	if req.DryRun {
+		c.JSON(http.StatusOK, gin.H{
+			"month":                   monthStr,
+			"would_create":            len(toCreate),
+			"skipped":                 skipped,
+			"eligible":                eligible,
+			"month_already_generated": monthAlreadyGenerated,
+			"dry_run":                 true,
+		})
+		return
+	}
+
+	if len(toCreate) > 0 {
+		if err := h.payments.CreateMany(c.Request.Context(), toCreate); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	created := make([]domainpay.Payment, len(toCreate))
+	for i, p := range toCreate {
+		created[i] = *p
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"month":                   monthStr,
+		"created":                 len(created),
+		"skipped":                 skipped,
+		"eligible":                eligible,
+		"month_already_generated": monthAlreadyGenerated,
+		"data":                    created,
+	})
+}
+
+func mortgagePropertyTotals(properties []domainprop.Property) (count int, totalUF float64) {
+	for _, prop := range properties {
+		if prop.Financials.MonthlyMortgageUF <= 0 {
+			continue
+		}
+		count++
+		totalUF += prop.Financials.MonthlyMortgageUF
+	}
+	return count, totalUF
+}
+
+func (h *ResourcesHandler) GetDividendStats(c *gin.Context) {
+	orgID := middleware.GetOrgID(c)
+	month := c.Query("month")
+	if month == "" {
+		month = time.Now().UTC().Format("2006-01")
+	}
+	stats, err := h.payments.DividendMonthStats(c.Request.Context(), orgID, month)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	banks, err := h.payments.DividendsByBank(c.Request.Context(), orgID, month)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	mortgaged, err := h.properties.ListWithMortgage(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	mortgageCount, totalMonthlyMortgageUF := mortgagePropertyTotals(mortgaged)
+	bankItems := make([]gin.H, len(banks))
+	for i, b := range banks {
+		bankItems[i] = gin.H{
+			"bank_name":      b.BankName,
+			"bank_id":        b.BankID,
+			"pending_uf":     b.PendingUF,
+			"paid_uf":        b.PaidUF,
+			"property_count": b.PropertyCount,
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"month":                    stats.Month,
+		"total_paid_uf":            stats.PaidTotalUF,
+		"total_pending_uf":         stats.PendingTotalUF,
+		"total_paid_count":         stats.PaidCount,
+		"total_pending_count":      stats.PendingCount,
+		"total_monthly_mortgage_uf": totalMonthlyMortgageUF,
+		"mortgage_property_count":  mortgageCount,
+		"by_bank":                  bankItems,
+	})
+}
+
+func (h *ResourcesHandler) ListDividendBanks(c *gin.Context) {
+	orgID := middleware.GetOrgID(c)
+	month := c.Query("month")
+	if month == "" {
+		month = time.Now().UTC().Format("2006-01")
+	}
+	type bankOption struct {
+		name string
+		id   string
+	}
+	seen := make(map[string]bankOption)
+	addBank := func(name, id string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		key := strings.ToLower(name)
+		if existing, ok := seen[key]; ok {
+			if existing.id == "" && id != "" {
+				seen[key] = bankOption{name: name, id: id}
+			}
+			return
+		}
+		seen[key] = bankOption{name: name, id: id}
+	}
+
+	contacts, _, err := h.contacts.List(c.Request.Context(), orgID, 1, 500, string(domaincrm.TypeBank))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	for _, c := range contacts {
+		addBank(c.Name, c.ID)
+	}
+	properties, err := h.properties.ListWithMortgage(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	for _, prop := range properties {
+		if prop.Financials.BankName != "" {
+			addBank(prop.Financials.BankName, h.resolveBankID(c.Request.Context(), orgID, prop.Financials.BankName))
+		}
+		if pb := paymentBankFromProperty(prop); pb != "" && pb != prop.Financials.BankName {
+			addBank(pb, h.resolveBankID(c.Request.Context(), orgID, pb))
+		}
+	}
+	dividendBanks, err := h.payments.DividendsByBank(c.Request.Context(), orgID, month)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	for _, b := range dividendBanks {
+		addBank(b.BankName, b.BankID)
+	}
+
+	items := make([]gin.H, 0, len(seen))
+	for _, b := range seen {
+		items = append(items, gin.H{"bank_name": b.name, "bank_id": b.id})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		a, _ := items[i]["bank_name"].(string)
+		b, _ := items[j]["bank_name"].(string)
+		return strings.ToLower(a) < strings.ToLower(b)
+	})
+	c.JSON(http.StatusOK, gin.H{"data": items, "month": month})
 }
 
 // CRM

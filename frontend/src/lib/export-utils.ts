@@ -78,7 +78,10 @@ function propertiesToCsv(items: Property[]): string {
   const headers = [
     'id', 'nombre', 'tipo', 'estado', 'proposito', 'calle', 'comuna', 'ciudad', 'region',
     'rol', 'propietario', 'unidad', 'piso', 'area_m2', 'renta_esperada', 'moneda',
-    'valor_uf', 'deuda_uf', 'dividendo_mensual_uf', 'banco',
+    'valor_uf', 'credito_original_uf', 'deuda_uf', 'dividendo_mensual_uf', 'plazo_anos', 'cuotas_pagadas', 'banco', 'numero_credito', 'banco_pago', 'pac',
+    'seguro_incendio_empresa', 'seguro_incendio_uf', 'seguro_incendio_poliza',
+    'seguro_sismo_empresa', 'seguro_sismo_uf', 'seguro_sismo_poliza',
+    'seguro_desgravamen_empresa', 'seguro_desgravamen_uf', 'seguro_desgravamen_poliza',
   ]
   const rows = items.map((p) => [
     p.id,
@@ -98,9 +101,24 @@ function propertiesToCsv(items: Property[]): string {
     p.financials?.expected_rent?.amount ?? '',
     p.financials?.expected_rent?.currency ?? '',
     p.financials?.value_uf ?? '',
+    p.financials?.original_loan_uf ?? '',
     p.financials?.debt_uf ?? '',
     p.financials?.monthly_mortgage_uf ?? '',
+    p.financials?.loan_term_years ?? '',
+    p.financials?.installments_paid ?? '',
     p.financials?.bank_name ?? '',
+    p.financials?.credit_number ?? '',
+    p.financials?.payment_bank ?? '',
+    p.financials?.pac_enabled ? 'si' : 'no',
+    p.insurance?.fire?.company ?? '',
+    p.insurance?.fire?.amount_uf ?? '',
+    p.insurance?.fire?.policy_number ?? '',
+    p.insurance?.earthquake?.company ?? '',
+    p.insurance?.earthquake?.amount_uf ?? '',
+    p.insurance?.earthquake?.policy_number ?? '',
+    p.insurance?.desgravamen?.company ?? '',
+    p.insurance?.desgravamen?.amount_uf ?? '',
+    p.insurance?.desgravamen?.policy_number ?? '',
   ])
   return toCsv(headers, rows)
 }
@@ -144,7 +162,7 @@ function leasesToCsv(items: Lease[]): string {
 function paymentsToCsv(items: Payment[]): string {
   const headers = [
     'id', 'propiedad_id', 'arriendo_id', 'arrendatario_id', 'tipo', 'estado',
-    'monto', 'moneda', 'fecha_vencimiento', 'fecha_pago', 'notas',
+    'monto', 'moneda', 'fecha_vencimiento', 'fecha_pago', 'institucion', 'banco_pago', 'pac', 'notas',
   ]
   const rows = items.map((p) => [
     p.id,
@@ -157,6 +175,9 @@ function paymentsToCsv(items: Payment[]): string {
     p.amount?.currency ?? '',
     p.due_date,
     p.paid_date ?? '',
+    p.bank_name ?? '',
+    p.payment_bank ?? '',
+    p.pac_enabled ? 'si' : 'no',
     p.notes ?? '',
   ])
   return toCsv(headers, rows)

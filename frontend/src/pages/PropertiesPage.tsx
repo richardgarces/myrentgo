@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, Link } from 'react-router-dom'
 import { ChevronDown, ChevronRight, FileText, Plus, Search, Star, X } from 'lucide-react'
+import { PacBadge, pacCardAccentClassName } from '@/components/PacBadge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FormDialog, FormField, FormSelect } from '@/components/ui/form-dialog'
 import { Input } from '@/components/ui/input'
 import { LoadingSkeleton } from '@/components/ui/page'
 import { api, type Document as PropertyDocument, type Lease, type Property, type PropertyPhoto } from '@/lib/api'
-import { formatDate, formatUF } from '@/lib/utils'
-import { cn } from '@/lib/utils'
+import { cn, formatDate, formatUF, propertyLinkLabel } from '@/lib/utils'
 import {
   CHILE_REGIONS,
   DEFAULT_COMMUNE,
@@ -244,11 +244,14 @@ function PropertyDocumentsSection({
   onPendingChange: (docs: PendingDocument[]) => void
 }) {
   const qc = useQueryClient()
+  const titleInputRef = useRef<HTMLInputElement>(null)
   const [title, setTitle] = useState('')
   const [category, setCategory] = useState('deed')
   const [fileError, setFileError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  const currentTitle = () => (titleInputRef.current?.value ?? title).trim()
 
   const { data: existingDocs, refetch } = useQuery({
     queryKey: ['documents', 'property', propertyId],
@@ -256,15 +259,15 @@ function PropertyDocumentsSection({
     enabled: !!propertyId,
   })
 
-  const readFile = (file: File): Promise<PendingDocument> =>
+  const readFile = (file: File, docTitle: string, docCategory: string): Promise<PendingDocument> =>
     new Promise((resolve, reject) => {
       const reader = new FileReader()
       reader.onload = () => {
         const file_data = reader.result as string
         resolve({
           localId: crypto.randomUUID(),
-          title: title.trim(),
-          category,
+          title: docTitle,
+          category: docCategory,
           file_name: file.name,
           file_data,
           mime_type: mimeFromDataUrl(file_data),
@@ -282,14 +285,15 @@ function PropertyDocumentsSection({
   }
 
   const addDocument = async (file: File) => {
-    if (!title.trim()) {
+    const docTitle = currentTitle()
+    if (!docTitle) {
       setFileError('Ingresa el nombre del documento')
       return
     }
     setFileError(null)
     setAdding(true)
     try {
-      const doc = await readFile(file)
+      const doc = await readFile(file, docTitle, category)
       if (propertyId) {
         await api.createDocument({
           entity_type: 'property',
@@ -332,13 +336,17 @@ function PropertyDocumentsSection({
       <div className="grid gap-3 sm:grid-cols-2">
         <FormField label="Nombre del documento">
           <Input
+            ref={titleInputRef}
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Escritura departamento"
+            onChange={(e) => {
+              setTitle(e.target.value)
+              if (fileError) setFileError(null)
+            }}
+            placeholder="Ej: Escritura del departamento"
           />
         </FormField>
         <FormField label="Categoría">
-          <FormSelect value={category} onChange={(e) => setCategory(e.target.value)}>
+          <FormSelect value={category} onChange={(e) => { setCategory(e.target.value); if (fileError) setFileError(null) }}>
             <option value="deed">Escritura</option>
             <option value="contract">Contrato</option>
             <option value="certificate">Certificado</option>
@@ -430,14 +438,18 @@ const emptyForm = {
   name: '', type: 'apartment', purpose: '', purpose_other: '',
   street: '', region: DEFAULT_REGION, commune: DEFAULT_COMMUNE,
   owner_name: '', property_rol: '', fojas: '', parking_property_id: '', warehouse_property_id: '',
-  value_uf: '', debt_uf: '', monthly_mortgage_uf: '',
-  loan_term_years: '', interest_rate: '', bank_name: '', payment_start_date: '',
+  value_uf: '', debt_uf: '', original_loan_uf: '', monthly_mortgage_uf: '',
+  loan_term_years: '', installments_paid: '', interest_rate: '', bank_name: '', credit_number: '', payment_start_date: '',
+  pac_enabled: false, payment_bank: '',
   unit_number: '', floor: '', area_m2: '',
   concierge_email: '', concierge_phone: '', butler_name: '', administration: '',
   administration_email: '', administration_phone: '',
   water_company: '', water_client_code: '',
   electricity_company: '', electricity_client_code: '',
   gas_company: '', gas_client_code: '',
+  fire_insurance_company: '', fire_insurance_amount_uf: '', fire_insurance_policy_number: '',
+  earthquake_insurance_company: '', earthquake_insurance_amount_uf: '', earthquake_insurance_policy_number: '',
+  desgravamen_insurance_company: '', desgravamen_insurance_amount_uf: '', desgravamen_insurance_policy_number: '',
   photos: [] as PropertyPhoto[],
 }
 
@@ -448,6 +460,18 @@ const emptyUtilityFields = {
   electricity_client_code: '',
   gas_company: '',
   gas_client_code: '',
+}
+
+const emptyInsuranceFields = {
+  fire_insurance_company: '',
+  fire_insurance_amount_uf: '',
+  fire_insurance_policy_number: '',
+  earthquake_insurance_company: '',
+  earthquake_insurance_amount_uf: '',
+  earthquake_insurance_policy_number: '',
+  desgravamen_insurance_company: '',
+  desgravamen_insurance_amount_uf: '',
+  desgravamen_insurance_policy_number: '',
 }
 
 type PropertyForm = typeof emptyForm
@@ -491,12 +515,17 @@ function propertyToForm(p: Property, allProperties: Property[] = []): PropertyFo
     warehouse_property_id: warehousePropertyId,
     value_uf: p.financials?.value_uf ? String(p.financials.value_uf) : '',
     debt_uf: p.financials?.debt_uf ? String(p.financials.debt_uf) : '',
+    original_loan_uf: p.financials?.original_loan_uf ? String(p.financials.original_loan_uf) : '',
     monthly_mortgage_uf: p.financials?.monthly_mortgage_uf
       ? String(p.financials.monthly_mortgage_uf)
       : '',
     loan_term_years: p.financials?.loan_term_years ? String(p.financials.loan_term_years) : '',
+    installments_paid: p.financials?.installments_paid ? String(p.financials.installments_paid) : '',
     interest_rate: p.financials?.interest_rate ? String(p.financials.interest_rate) : '',
     bank_name: p.financials?.bank_name ?? '',
+    credit_number: p.financials?.credit_number ?? '',
+    pac_enabled: p.financials?.pac_enabled ?? false,
+    payment_bank: p.financials?.payment_bank ?? '',
     payment_start_date: p.financials?.payment_start_date
       ? p.financials.payment_start_date.slice(0, 10)
       : '',
@@ -515,6 +544,21 @@ function propertyToForm(p: Property, allProperties: Property[] = []): PropertyFo
     electricity_client_code: p.utility_accounts?.electricity?.client_code ?? '',
     gas_company: p.utility_accounts?.gas?.company ?? '',
     gas_client_code: p.utility_accounts?.gas?.client_code ?? '',
+    fire_insurance_company: p.insurance?.fire?.company ?? '',
+    fire_insurance_amount_uf: p.insurance?.fire?.amount_uf
+      ? String(p.insurance.fire.amount_uf)
+      : '',
+    fire_insurance_policy_number: p.insurance?.fire?.policy_number ?? '',
+    earthquake_insurance_company: p.insurance?.earthquake?.company ?? '',
+    earthquake_insurance_amount_uf: p.insurance?.earthquake?.amount_uf
+      ? String(p.insurance.earthquake.amount_uf)
+      : '',
+    earthquake_insurance_policy_number: p.insurance?.earthquake?.policy_number ?? '',
+    desgravamen_insurance_company: p.insurance?.desgravamen?.company ?? '',
+    desgravamen_insurance_amount_uf: p.insurance?.desgravamen?.amount_uf
+      ? String(p.insurance.desgravamen.amount_uf)
+      : '',
+    desgravamen_insurance_policy_number: p.insurance?.desgravamen?.policy_number ?? '',
     photos: (p.photos ?? []).map((ph) => ({
       url: ph.url,
       caption: ph.caption ?? '',
@@ -544,10 +588,15 @@ function formToPayload(form: PropertyForm) {
     } : {}),
     value_uf: form.value_uf ? Number(form.value_uf) : undefined,
     debt_uf: form.debt_uf ? Number(form.debt_uf) : undefined,
+    original_loan_uf: form.original_loan_uf ? Number(form.original_loan_uf) : undefined,
     monthly_mortgage_uf: form.monthly_mortgage_uf ? Number(form.monthly_mortgage_uf) : undefined,
     loan_term_years: form.loan_term_years ? Number(form.loan_term_years) : undefined,
+    installments_paid: form.installments_paid ? Number(form.installments_paid) : undefined,
     interest_rate: form.interest_rate ? Number(form.interest_rate) : undefined,
     bank_name: form.bank_name || undefined,
+    credit_number: form.credit_number || undefined,
+    pac_enabled: form.pac_enabled,
+    payment_bank: form.payment_bank || undefined,
     payment_start_date: form.payment_start_date || undefined,
     area_m2: form.area_m2 ? Number(form.area_m2) : undefined,
     ...(form.type !== 'warehouse' && form.type !== 'parking' ? {
@@ -557,6 +606,21 @@ function formToPayload(form: PropertyForm) {
       electricity_client_code: form.electricity_client_code || undefined,
       gas_company: form.gas_company || undefined,
       gas_client_code: form.gas_client_code || undefined,
+      fire_insurance_company: form.fire_insurance_company || undefined,
+      fire_insurance_amount_uf: form.fire_insurance_amount_uf
+        ? Number(form.fire_insurance_amount_uf)
+        : undefined,
+      fire_insurance_policy_number: form.fire_insurance_policy_number || undefined,
+      earthquake_insurance_company: form.earthquake_insurance_company || undefined,
+      earthquake_insurance_amount_uf: form.earthquake_insurance_amount_uf
+        ? Number(form.earthquake_insurance_amount_uf)
+        : undefined,
+      earthquake_insurance_policy_number: form.earthquake_insurance_policy_number || undefined,
+      desgravamen_insurance_company: form.desgravamen_insurance_company || undefined,
+      desgravamen_insurance_amount_uf: form.desgravamen_insurance_amount_uf
+        ? Number(form.desgravamen_insurance_amount_uf)
+        : undefined,
+      desgravamen_insurance_policy_number: form.desgravamen_insurance_policy_number || undefined,
     } : {}),
     photos: form.photos.map((ph) => ({
       url: ph.url,
@@ -584,6 +648,16 @@ function formatUtilityLine(label: string, account?: { company?: string; client_c
   const parts: string[] = []
   if (account.company) parts.push(account.company)
   if (account.client_code) parts.push(`cód. ${account.client_code}`)
+  return `${label}: ${parts.join(', ')}`
+}
+
+function formatInsuranceLine(label: string, policy?: { company?: string; amount_uf?: number; policy_number?: string }): string | null {
+  if (!policy?.company && !(policy?.amount_uf ?? 0) && !policy?.policy_number) return null
+  const parts: string[] = []
+  if (policy?.company) parts.push(policy.company)
+  const amount = policy?.amount_uf ?? 0
+  if (amount > 0) parts.push(formatUF(amount))
+  if (policy?.policy_number) parts.push(`póliza ${policy.policy_number}`)
   return `${label}: ${parts.join(', ')}`
 }
 
@@ -842,7 +916,9 @@ function PropertyFormFields({
           setForm({
             ...form,
             type,
-            ...(type === 'warehouse' || type === 'parking' ? { parking_property_id: '', warehouse_property_id: '', ...emptyUtilityFields } : {}),
+            ...(type === 'warehouse' || type === 'parking' ? {
+              parking_property_id: '', warehouse_property_id: '', ...emptyUtilityFields, ...emptyInsuranceFields,
+            } : {}),
             ...(type !== 'apartment' ? { warehouse_property_id: '' } : {}),
           })
         }}>
@@ -945,7 +1021,7 @@ function PropertyFormFields({
               <option value="">Sin bodega</option>
               {selectableWarehouses.map((wh) => (
                 <option key={wh.id} value={wh.id}>
-                  {wh.name}{wh.unit_number ? ` (N° ${wh.unit_number})` : ''}{wh.address?.property_rol ? ` (Rol ${wh.address.property_rol})` : ''}
+                  {propertyLinkLabel(wh)}
                 </option>
               ))}
             </FormSelect>
@@ -990,7 +1066,7 @@ function PropertyFormFields({
               <option value="">Sin estacionamiento</option>
               {selectableParking.map((pk) => (
                 <option key={pk.id} value={pk.id}>
-                  {pk.name}{pk.unit_number ? ` (N° ${pk.unit_number})` : ''}{pk.address?.property_rol ? ` (Rol ${pk.address.property_rol})` : ''}
+                  {propertyLinkLabel(pk)}
                 </option>
               ))}
             </FormSelect>
@@ -1005,19 +1081,79 @@ function PropertyFormFields({
       )}
 
       <FormSection title="Crédito hipotecario (UF / dividendo)" />
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <FormField label="Valor en UF"><Input type="number" step="any" min="0" value={form.value_uf} onChange={(e) => setForm({ ...form, value_uf: e.target.value })} placeholder="2500" /></FormField>
+        <FormField label="Monto original del crédito (UF)"><Input type="number" step="any" min="0" value={form.original_loan_uf} onChange={(e) => setForm({ ...form, original_loan_uf: e.target.value })} placeholder="2000" /></FormField>
         <FormField label="Deuda UF a la fecha"><Input type="number" step="any" min="0" value={form.debt_uf} onChange={(e) => setForm({ ...form, debt_uf: e.target.value })} placeholder="1800" /></FormField>
       </div>
       <FormField label="Fecha de compra (inicio de pago)">
         <Input type="date" value={form.payment_start_date} onChange={(e) => setForm({ ...form, payment_start_date: e.target.value })} />
       </FormField>
       <FormField label="Dividendo mensual (UF)"><Input type="number" step="any" min="0" value={form.monthly_mortgage_uf} onChange={(e) => setForm({ ...form, monthly_mortgage_uf: e.target.value })} placeholder="11.5" /></FormField>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <FormField label="Plazo comprado (años)"><Input type="number" step="1" min="0" value={form.loan_term_years} onChange={(e) => setForm({ ...form, loan_term_years: e.target.value })} placeholder="30" /></FormField>
+        <FormField label="Cuotas pagadas"><Input type="number" step="1" min="0" value={form.installments_paid} onChange={(e) => setForm({ ...form, installments_paid: e.target.value })} placeholder="24" /></FormField>
         <FormField label="Tasa aplicada (%)"><Input type="number" step="any" min="0" value={form.interest_rate} onChange={(e) => setForm({ ...form, interest_rate: e.target.value })} placeholder="4.5" /></FormField>
       </div>
-      <FormField label="Institución (Banco)"><Input value={form.bank_name} onChange={(e) => setForm({ ...form, bank_name: e.target.value })} placeholder="Banco de Chile" /></FormField>
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label="Institución del crédito"><Input value={form.bank_name} onChange={(e) => setForm({ ...form, bank_name: e.target.value })} placeholder="Banco de Chile" /></FormField>
+        <FormField label="Número del crédito"><Input value={form.credit_number} onChange={(e) => setForm({ ...form, credit_number: e.target.value })} placeholder="1234567890" /></FormField>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label="Banco de pago del dividendo">
+          <Input value={form.payment_bank} onChange={(e) => setForm({ ...form, payment_bank: e.target.value })} placeholder="Ej: BCI (cuenta de cargo)" />
+        </FormField>
+        <FormField label="PAC (pago automático)">
+          <label className="flex items-center gap-2 h-10 text-sm">
+            <input
+              type="checkbox"
+              checked={form.pac_enabled}
+              onChange={(e) => setForm({ ...form, pac_enabled: e.target.checked })}
+            />
+            Dividendo sujeto a PAC
+          </label>
+        </FormField>
+      </div>
+
+      {form.type !== 'warehouse' && form.type !== 'parking' && (
+        <>
+          <FormSection title="Seguros" />
+          <p className="text-xs text-muted-foreground -mt-1">Seguro de incendio, sismo y desgravamen — empresa, monto anual en UF y número de póliza.</p>
+          <div className="grid grid-cols-3 gap-3">
+            <FormField label="Seguro incendio — Empresa">
+              <Input value={form.fire_insurance_company} onChange={(e) => setForm({ ...form, fire_insurance_company: e.target.value })} placeholder="HDI Seguros" />
+            </FormField>
+            <FormField label="Seguro incendio — Monto (UF)">
+              <Input type="number" step="any" min="0" value={form.fire_insurance_amount_uf} onChange={(e) => setForm({ ...form, fire_insurance_amount_uf: e.target.value })} placeholder="0.5" />
+            </FormField>
+            <FormField label="Seguro incendio — N° póliza">
+              <Input value={form.fire_insurance_policy_number} onChange={(e) => setForm({ ...form, fire_insurance_policy_number: e.target.value })} placeholder="123456789" />
+            </FormField>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <FormField label="Seguro sismo — Empresa">
+              <Input value={form.earthquake_insurance_company} onChange={(e) => setForm({ ...form, earthquake_insurance_company: e.target.value })} placeholder="Consorcio" />
+            </FormField>
+            <FormField label="Seguro sismo — Monto (UF)">
+              <Input type="number" step="any" min="0" value={form.earthquake_insurance_amount_uf} onChange={(e) => setForm({ ...form, earthquake_insurance_amount_uf: e.target.value })} placeholder="0.3" />
+            </FormField>
+            <FormField label="Seguro sismo — N° póliza">
+              <Input value={form.earthquake_insurance_policy_number} onChange={(e) => setForm({ ...form, earthquake_insurance_policy_number: e.target.value })} placeholder="987654321" />
+            </FormField>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <FormField label="Seguro desgravamen — Empresa">
+              <Input value={form.desgravamen_insurance_company} onChange={(e) => setForm({ ...form, desgravamen_insurance_company: e.target.value })} placeholder="MetLife" />
+            </FormField>
+            <FormField label="Seguro desgravamen — Monto (UF)">
+              <Input type="number" step="any" min="0" value={form.desgravamen_insurance_amount_uf} onChange={(e) => setForm({ ...form, desgravamen_insurance_amount_uf: e.target.value })} placeholder="0.2" />
+            </FormField>
+            <FormField label="Seguro desgravamen — N° póliza">
+              <Input value={form.desgravamen_insurance_policy_number} onChange={(e) => setForm({ ...form, desgravamen_insurance_policy_number: e.target.value })} placeholder="456789123" />
+            </FormField>
+          </div>
+        </>
+      )}
 
       {form.type !== 'warehouse' && form.type !== 'parking' && (
         <>
@@ -1086,13 +1222,23 @@ function PropertyCard({
     formatUtilityLine('Luz', p.utility_accounts?.electricity),
     formatUtilityLine('Gas', p.utility_accounts?.gas),
   ].filter((line): line is string => line !== null)
+  const insuranceLines = p.type === 'warehouse' || p.type === 'parking' ? [] : [
+    formatInsuranceLine('Seguro incendio', p.insurance?.fire),
+    formatInsuranceLine('Seguro sismo', p.insurance?.earthquake),
+    formatInsuranceLine('Seguro desgravamen', p.insurance?.desgravamen),
+  ].filter((line): line is string => line !== null)
+  const isPac = p.financials?.pac_enabled === true
+
   return (
     <Card
       role="button"
       tabIndex={0}
       onClick={() => onEdit(p)}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEdit(p) } }}
-      className="hover:shadow-md transition-shadow cursor-pointer hover:border-primary/40"
+      className={cn(
+        'hover:shadow-md transition-shadow cursor-pointer hover:border-primary/40',
+        isPac && pacCardAccentClassName,
+      )}
     >
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-2">
@@ -1104,11 +1250,19 @@ function PropertyCard({
                 className="h-12 w-12 rounded-md object-cover shrink-0 border"
               />
             )}
-            <CardTitle className="text-base leading-tight">{p.name}</CardTitle>
+            <CardTitle className="text-base leading-tight">
+              {p.name}
+              {(p.type === 'parking' || p.type === 'warehouse') && p.unit_number?.trim()
+                ? ` N° ${p.unit_number.trim()}`
+                : ''}
+            </CardTitle>
           </div>
-          <span className={cn('text-xs px-2 py-1 rounded-full shrink-0', statusColors[displayStatus] || '')}>
-            {statusLabels[displayStatus] || displayStatus}
-          </span>
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            {isPac && <PacBadge showIcon />}
+            <span className={cn('text-xs px-2 py-1 rounded-full', statusColors[displayStatus] || '')}>
+              {statusLabels[displayStatus] || displayStatus}
+            </span>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-1 text-sm text-muted-foreground">
@@ -1163,7 +1317,13 @@ function PropertyCard({
           <p>Compra / inicio pago: {formatDate(p.financials.payment_start_date)}</p>
         )}
         {(p.financials?.value_uf ?? 0) > 0 && <p>Valor: {formatUF(p.financials!.value_uf!)}</p>}
+        {(p.financials?.original_loan_uf ?? 0) > 0 && (
+          <p>Crédito original: {formatUF(p.financials!.original_loan_uf!)}</p>
+        )}
         {(p.financials?.debt_uf ?? 0) > 0 && <p>Deuda: {formatUF(p.financials!.debt_uf!)}</p>}
+        {(p.financials?.installments_paid ?? 0) > 0 && (
+          <p>Cuotas pagadas: {p.financials!.installments_paid}</p>
+        )}
         {(p.financials?.monthly_mortgage_uf ?? 0) > 0 && (
           <p>Dividendo: {formatUF(p.financials!.monthly_mortgage_uf!)}/mes</p>
         )}
@@ -1174,8 +1334,38 @@ function PropertyCard({
           <p>Tasa: {p.financials!.interest_rate}%</p>
         )}
         {p.financials?.bank_name && (
-          <p>Banco: <span className="text-foreground">{p.financials.bank_name}</span></p>
+          <p>
+            Banco crédito: <span className="text-foreground">{p.financials.bank_name}</span>
+            {p.financials.credit_number && (
+              <> — N° crédito: <span className="text-foreground">{p.financials.credit_number}</span></>
+            )}
+          </p>
         )}
+        {p.financials?.payment_bank && (
+          <p>Banco de pago: <span className="text-foreground">{p.financials.payment_bank}</span></p>
+        )}
+        {isPac && (
+          <p className="text-teal-700 dark:text-teal-300">
+            Dividendo con <PacBadge className="align-middle" />
+            {p.financials?.payment_bank ? (
+              <> — cargo en <span className="text-foreground">{p.financials.payment_bank}</span></>
+            ) : null}
+          </p>
+        )}
+        {(p.financials?.monthly_mortgage_uf ?? 0) > 0 && (
+          <p>
+            <Link
+              to={`/dividends?property_id=${p.id}`}
+              className="text-primary hover:underline"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Ver dividendos →
+            </Link>
+          </p>
+        )}
+        {insuranceLines.length > 0 && insuranceLines.map((line) => (
+          <p key={line}>{line}</p>
+        ))}
         {utilityLines.length > 0 && utilityLines.map((line) => (
           <p key={line}>{line}</p>
         ))}
@@ -1255,7 +1445,12 @@ export function PropertiesPage() {
     enabled: open && form.type === 'apartment',
   })
 
-  const propertyMap = new Map((data?.data ?? []).map((p) => [p.id, p.name]))
+  const propertyMap = new Map(
+    (data?.data ?? []).map((p) => [
+      p.id,
+      p.type === 'parking' || p.type === 'warehouse' ? propertyLinkLabel(p) : p.name,
+    ]),
+  )
   const properties = data?.data ?? []
   const filters = useMemo(() => parseFiltersFromURL(searchParams), [searchParams])
   const activeFilterCount = countActiveFilters(filters)

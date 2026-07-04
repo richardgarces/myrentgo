@@ -122,6 +122,11 @@ func (c *Client) EnsureIndexes(ctx context.Context) error {
 			{Keys: bson.D{{Key: "organization_id", Value: 1}, {Key: "tenant_id", Value: 1}}},
 			{Keys: bson.D{{Key: "organization_id", Value: 1}, {Key: "scheduled_at", Value: -1}}},
 		},
+		"email_recipients": {
+			{Keys: bson.D{{Key: "organization_id", Value: 1}}},
+			{Keys: bson.D{{Key: "organization_id", Value: 1}, {Key: "email", Value: 1}}},
+			{Keys: bson.D{{Key: "organization_id", Value: 1}, {Key: "enabled", Value: 1}}},
+		},
 		"audit_logs": {
 			{Keys: bson.D{{Key: "organization_id", Value: 1}, {Key: "created_at", Value: -1}}},
 			{Keys: bson.D{{Key: "user_id", Value: 1}}},

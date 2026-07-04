@@ -84,6 +84,10 @@ class ApiClient {
     return this.request<DashboardData>('/dashboard')
   }
 
+  getUF() {
+    return this.request<UFIndicator>('/indicators/uf')
+  }
+
   getProperties(params?: { status?: string; page?: number; type?: string; limit?: number }) {
     const q = new URLSearchParams()
     if (params?.status) q.set('status', params.status)
@@ -197,13 +201,82 @@ class ApiClient {
     })
   }
 
+  getDividends(params?: { page?: number; status?: string; property_id?: string; bank_name?: string; month?: string; limit?: number }) {
+    const q = new URLSearchParams()
+    if (params?.page) q.set('page', String(params.page))
+    if (params?.limit) q.set('limit', String(params.limit))
+    if (params?.status) q.set('status', params.status)
+    if (params?.property_id) q.set('property_id', params.property_id)
+    if (params?.bank_name) q.set('bank_name', params.bank_name)
+    if (params?.month) q.set('month', params.month)
+    const qs = q.toString()
+    return this.request<Paginated<DividendPayment>>(`/dividends${qs ? `?${qs}` : ''}`)
+  }
+
+  getDividendStats(month?: string) {
+    const q = month ? `?month=${encodeURIComponent(month)}` : ''
+    return this.request<DividendStats>(`/dividends/stats${q}`)
+  }
+
+  getDividendBanks(month?: string) {
+    const q = month ? `?month=${encodeURIComponent(month)}` : ''
+    return this.request<{ data: BankOption[]; month: string }>(`/dividends/banks${q}`)
+  }
+
+  createDividend(data: {
+    property_id: string
+    bank_id?: string
+    bank_name?: string
+    payment_bank?: string
+    pac_enabled?: boolean
+    amount: number
+    currency?: string
+    due_date: string
+    notes?: string
+  }) {
+    return this.request<DividendPayment>('/dividends', { method: 'POST', body: JSON.stringify(data) })
+  }
+
+  updateDividend(id: string, data: {
+    bank_id?: string
+    bank_name?: string
+    payment_bank?: string
+    pac_enabled?: boolean
+    amount?: number
+    currency?: string
+    due_date?: string
+    notes?: string
+  }) {
+    return this.request<DividendPayment>(`/dividends/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+  }
+
+  markDividendPaid(id: string) {
+    return this.request<{ status: string }>(`/dividends/${id}/paid`, { method: 'PATCH' })
+  }
+
+  generatePendingDividends(month?: string, dryRun = false) {
+    return this.request<{
+      month: string
+      created?: number
+      would_create?: number
+      skipped: number
+      month_already_generated?: boolean
+      dry_run?: boolean
+      data?: DividendPayment[]
+    }>('/dividends/generate-pending', {
+      method: 'POST',
+      body: JSON.stringify({ month: month || undefined, dry_run: dryRun }),
+    })
+  }
+
   getMortgages(page = 1) {
     return this.request<Paginated<Mortgage>>(`/mortgages?page=${page}`)
   }
 
-  getContacts(page = 1, type?: string) {
+  getContacts(page = 1, type?: string, limit = 200) {
     const q = new URLSearchParams({ page: String(page) })
     if (type) q.set('type', type)
+    if (limit) q.set('limit', String(limit))
     return this.request<Paginated<CrmContact>>(`/crm/contacts?${q}`)
   }
 
@@ -328,6 +401,62 @@ class ApiClient {
   deleteNotification(id: string) {
     return this.request<void>(`/notifications/${id}`, { method: 'DELETE' })
   }
+
+  getEmailRecipients(page = 1) {
+    return this.request<Paginated<EmailRecipient>>(`/email-recipients?page=${page}`)
+  }
+
+  getEmailNotificationTypes() {
+    return this.request<{ data: EmailNotificationType[] }>('/email-recipients/types')
+  }
+
+  getSMTPStatus() {
+    return this.request<{ configured: boolean }>('/email-recipients/smtp-status')
+  }
+
+  createEmailRecipient(data: {
+    email: string
+    name: string
+    label?: string
+    enabled?: boolean
+    notification_types: string[]
+  }) {
+    return this.request<EmailRecipient>('/email-recipients', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+
+  updateEmailRecipient(id: string, data: {
+    email?: string
+    name?: string
+    label?: string
+    enabled?: boolean
+    notification_types?: string[]
+  }) {
+    return this.request<EmailRecipient>(`/email-recipients/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    })
+  }
+
+  deleteEmailRecipient(id: string) {
+    return this.request<void>(`/email-recipients/${id}`, { method: 'DELETE' })
+  }
+
+  sendTestEmail(data: { recipient_id?: string; email?: string }) {
+    return this.request<EmailSendResponse>('/notifications/email/test', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+
+  sendEmailNotifications(data?: { notification_id?: string }) {
+    return this.request<EmailSendResponse>('/notifications/email/send', {
+      method: 'POST',
+      body: JSON.stringify(data ?? {}),
+    })
+  }
 }
 
 export interface DashboardData {
@@ -337,6 +466,7 @@ export interface DashboardData {
   occupancy_rate: number
   monthly_income: number
   monthly_expenses: number
+  monthly_expenses_uf?: number
   net_cash_flow: number
   overdue_payments: number
   pending_payments_count: number
@@ -359,10 +489,23 @@ export interface DashboardData {
   total_monthly_rent: number
   total_value_uf: number
   total_debt_uf: number
+  total_original_loan_uf: number
   total_monthly_mortgage_uf: number
+  dividend_month: string
+  total_dividend_paid_uf: number
+  total_dividend_pending_uf: number
+  total_dividend_paid_count: number
+  total_dividend_pending_count: number
+  dividends_by_bank: BankDividendTotal[]
   properties_by_type: Array<{ type: string; count: number }>
   upcoming_expirations: Array<{ id: string; type: string; title: string; expires_at: string; days_left: number }>
-  profitability: Array<{ property_id: string; property_name: string; income: number; expenses: number; profit: number; roi: number }>
+  profitability: Array<{ property_id: string; property_name: string; income: number; expenses: number; expenses_uf?: number; profit: number; roi: number }>
+}
+
+export interface UFIndicator {
+  value: number
+  date: string
+  source: string
 }
 
 export interface PropertyPayload {
@@ -381,10 +524,13 @@ export interface PropertyPayload {
   warehouse_property_id?: string
   value_uf?: number
   debt_uf?: number
+  original_loan_uf?: number
   monthly_mortgage_uf?: number
   loan_term_years?: number
+  installments_paid?: number
   interest_rate?: number
   bank_name?: string
+  credit_number?: string
   payment_start_date?: string
   unit_number?: string
   floor?: string
@@ -401,12 +547,27 @@ export interface PropertyPayload {
   electricity_client_code?: string
   gas_company?: string
   gas_client_code?: string
+  fire_insurance_company?: string
+  fire_insurance_amount_uf?: number
+  fire_insurance_policy_number?: string
+  earthquake_insurance_company?: string
+  earthquake_insurance_amount_uf?: number
+  earthquake_insurance_policy_number?: string
+  desgravamen_insurance_company?: string
+  desgravamen_insurance_amount_uf?: number
+  desgravamen_insurance_policy_number?: string
   photos?: PropertyPhoto[]
 }
 
 export interface UtilityAccount {
   company?: string
   client_code?: string
+}
+
+export interface InsurancePolicy {
+  company?: string
+  amount_uf?: number
+  policy_number?: string
 }
 
 export interface PropertyPhoto {
@@ -444,17 +605,27 @@ export interface Property {
     electricity?: UtilityAccount
     gas?: UtilityAccount
   }
+  insurance?: {
+    fire?: InsurancePolicy
+    earthquake?: InsurancePolicy
+    desgravamen?: InsurancePolicy
+  }
   address: { street: string; commune: string; city: string; region?: string; property_rol?: string }
   deed?: { fojas?: string }
   financials: {
     expected_rent?: { amount: number; currency: string }
     value_uf?: number
     debt_uf?: number
+    original_loan_uf?: number
     monthly_mortgage_uf?: number
     loan_term_years?: number
+    installments_paid?: number
     interest_rate?: number
     bank_name?: string
+    credit_number?: string
     payment_start_date?: string
+    pac_enabled?: boolean
+    payment_bank?: string
   }
 }
 
@@ -486,12 +657,44 @@ export interface Payment {
   property_id?: string
   lease_id?: string
   tenant_id?: string
+  bank_id?: string
+  bank_name?: string
+  pac_enabled?: boolean
+  payment_bank?: string
   type: string
   status: string
   amount: { amount: number; currency: string }
   due_date: string
   paid_date?: string
   notes?: string
+}
+
+export interface DividendPayment extends Payment {
+  type: 'dividend'
+}
+
+export interface DividendStats {
+  month: string
+  total_paid_uf: number
+  total_pending_uf: number
+  total_paid_count: number
+  total_pending_count: number
+  total_monthly_mortgage_uf?: number
+  mortgage_property_count?: number
+  by_bank: BankDividendTotal[]
+}
+
+export interface BankOption {
+  bank_name: string
+  bank_id?: string
+}
+
+export interface BankDividendTotal {
+  bank_name: string
+  bank_id?: string
+  pending_uf: number
+  paid_uf: number
+  property_count: number
 }
 
 export interface Mortgage {
@@ -578,6 +781,35 @@ export interface TenantNotification {
   organization_id: string
   created_at: string
   updated_at: string
+}
+
+export interface EmailRecipient {
+  id: string
+  organization_id: string
+  email: string
+  name: string
+  label?: string
+  enabled: boolean
+  notification_types: string[]
+  created_at: string
+  updated_at: string
+}
+
+export interface EmailNotificationType {
+  id: string
+  label: string
+}
+
+export interface EmailSendResponse {
+  message?: string
+  configured?: boolean
+  result?: {
+    sent_count: number
+    failed_count: number
+    recipients?: string[]
+    errors?: string[]
+  }
+  error?: string
 }
 
 export const api = new ApiClient()

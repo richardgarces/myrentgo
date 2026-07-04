@@ -21,10 +21,13 @@ import (
 
 	"github.com/richard/my-rent-go/internal/application/auth"
 	"github.com/richard/my-rent-go/internal/application/dashboard"
+	"github.com/richard/my-rent-go/internal/application/emailnotify"
 	"github.com/richard/my-rent-go/internal/application/eventbus"
 	appproperty "github.com/richard/my-rent-go/internal/application/property"
 	"github.com/richard/my-rent-go/internal/config"
 	jwtsvc "github.com/richard/my-rent-go/internal/infrastructure/jwt"
+	"github.com/richard/my-rent-go/internal/infrastructure/email"
+	"github.com/richard/my-rent-go/internal/infrastructure/mindicador"
 	"github.com/richard/my-rent-go/internal/infrastructure/mongodb"
 	httpx "github.com/richard/my-rent-go/internal/interfaces/http"
 	"github.com/richard/my-rent-go/internal/interfaces/http/handlers"
@@ -58,22 +61,36 @@ func main() {
 	userRepo := mongodb.NewUserRepo(mongo)
 	orgRepo := mongodb.NewOrgRepo(mongo)
 	propRepo := mongodb.NewPropertyRepo(mongo)
-	dashRepo := mongodb.NewDashboardRepo(mongo)
+	ufProvider := mindicador.NewUFProvider()
+	dashRepo := mongodb.NewDashboardRepo(mongo, ufProvider)
 
 	jwtService := jwtsvc.NewService(cfg.JWT.Secret, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL, cfg.JWT.Issuer)
 	authService := auth.NewAuthService(userRepo, orgRepo, jwtService, cfg.Security.BcryptCost)
 	propHandler := appproperty.NewCreatePropertyHandler(propRepo, bus)
 	dashHandler := dashboard.NewDashboardHandler(dashRepo)
 	resourcesHandler := handlers.NewResourcesHandler(mongo)
+	emailClient := email.NewClient(email.Config{
+		Host:     cfg.Notify.SMTPHost,
+		Port:     cfg.Notify.SMTPPort,
+		User:     cfg.Notify.SMTPUser,
+		Password: cfg.Notify.SMTPPassword,
+		From:     cfg.Notify.SMTPFrom,
+		FromName: cfg.Notify.SMTPFromName,
+	})
+	emailRecipientRepo := mongodb.NewEmailRecipientRepo(mongo)
+	emailNotifySvc := emailnotify.NewService(emailClient, emailRecipientRepo, mongodb.NewNotificationRepo(mongo))
+	emailNotifyHandler := handlers.NewEmailNotificationsHandler(emailNotifySvc, emailRecipientRepo)
 
 	router := httpx.NewRouter(httpx.Deps{
-		Config:    cfg,
-		Auth:      handlers.NewAuthHandler(authService),
-		Property:  handlers.NewPropertyHandler(propHandler),
-		Dashboard: handlers.NewDashboardHandler(dashHandler),
-		Resources: resourcesHandler,
-		AuthMW:    middleware.NewAuth(jwtService),
-		WSHub:     wsHub,
+		Config:      cfg,
+		Auth:        handlers.NewAuthHandler(authService),
+		Property:    handlers.NewPropertyHandler(propHandler),
+		Dashboard:   handlers.NewDashboardHandler(dashHandler),
+		Indicators:  handlers.NewIndicatorsHandler(ufProvider),
+		Resources:   resourcesHandler,
+		EmailNotify: emailNotifyHandler,
+		AuthMW:      middleware.NewAuth(jwtService),
+		WSHub:       wsHub,
 	})
 
 	srv := &http.Server{

@@ -8,7 +8,7 @@ import { FormDialog, FormField, FormSelect } from '@/components/ui/form-dialog'
 import { Input } from '@/components/ui/input'
 import { EmptyState, LoadingSkeleton, PageHeader, StatusBadge } from '@/components/ui/page'
 import { api, type Lease, type Payment } from '@/lib/api'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { formatCurrency, formatDate, formatUF } from '@/lib/utils'
 
 const emptyForm = { type: 'rent', amount: '', due_date: '', property_id: '', lease_id: '', tenant_id: '', notes: '' }
 
@@ -46,6 +46,7 @@ const paymentTypeLabels: Record<string, string> = {
   deposit: 'Depósito',
   expense: 'Gasto',
   common_fee: 'Gasto común',
+  dividend: 'Dividendo hipotecario',
 }
 
 function formatPaymentDescription(p: Payment): string {
@@ -60,6 +61,11 @@ function formatPaymentDescription(p: Payment): string {
       return p.notes?.trim() || 'Gasto'
     case 'common_fee':
       return p.notes?.trim() || 'Gasto común'
+    case 'dividend': {
+      const month = p.due_date?.slice(0, 7)
+      const bank = p.bank_name ? ` · ${p.bank_name}` : ''
+      return month ? `Dividendo ${formatMonthLabel(month)}${bank}` : `Dividendo hipotecario${bank}`
+    }
     default:
       return p.notes?.trim() || paymentTypeLabels[p.type] || p.type
   }
@@ -281,7 +287,11 @@ export function PaymentsPage() {
                       <td className="p-4 text-muted-foreground">{formatPaymentDescription(p)}</td>
                       <td className="p-4">{p.tenant_id ? tenantMap.get(p.tenant_id) ?? '—' : '—'}</td>
                       <td className="p-4"><StatusBadge status={p.status} /></td>
-                      <td className="p-4 font-medium">{formatCurrency(p.amount.amount)}</td>
+                      <td className="p-4 font-medium">
+                        {p.type === 'dividend' && p.amount.currency === 'UF'
+                          ? formatUF(p.amount.amount)
+                          : formatCurrency(p.amount.amount, p.amount.currency)}
+                      </td>
                       <td className="p-4">{formatDate(p.due_date)}</td>
                       <td className="p-4">
                         {(p.status === 'pending' || p.status === 'overdue') && (

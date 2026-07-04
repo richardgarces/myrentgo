@@ -51,11 +51,13 @@ type StorageConfig struct {
 }
 
 type NotifyConfig struct {
-	SMTPHost     string
-	SMTPPort     int
-	SMTPUser     string
-	SMTPPassword string
-	FromEmail    string
+	SMTPHost      string
+	SMTPPort      int
+	SMTPUser      string
+	SMTPPassword  string
+	SMTPFrom      string
+	SMTPFromName  string
+	FromEmail     string // deprecated alias for SMTPFrom
 	TelegramToken string
 	WhatsAppAPI   string
 }
@@ -97,6 +99,8 @@ func Load() *Config {
 			SMTPPort:      getIntEnv("SMTP_PORT", 587),
 			SMTPUser:      getEnv("SMTP_USER", ""),
 			SMTPPassword:  getEnv("SMTP_PASSWORD", ""),
+			SMTPFrom:      firstNonEmpty(getEnv("SMTP_FROM", ""), getEnv("FROM_EMAIL", "noreply@myrent.local")),
+			SMTPFromName:  getEnv("SMTP_FROM_NAME", "MyRent Go"),
 			FromEmail:     getEnv("FROM_EMAIL", "noreply@myrent.local"),
 			TelegramToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
 			WhatsAppAPI:   getEnv("WHATSAPP_API_URL", ""),
@@ -149,4 +153,13 @@ func getDurationEnv(key string, fallback time.Duration) time.Duration {
 		}
 	}
 	return fallback
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }

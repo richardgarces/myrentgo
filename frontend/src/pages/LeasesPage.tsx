@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input'
 import { PinConfirmDialog } from '@/components/ui/pin-confirm-dialog'
 import { EmptyState, LoadingSkeleton, StatusBadge } from '@/components/ui/page'
 import { api, type Lease, type Property } from '@/lib/api'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { formatCurrency, formatDate, propertyLinkLabel } from '@/lib/utils'
 
 const emptyForm = {
   property_id: '', tenant_id: '', start_date: '', end_date: '',
@@ -240,10 +240,10 @@ function LeaseFormFields({
   const warehouseAvailable = linkedIncludedAvailable(selectedProperty, leases, 'warehouse_property_id', excludeLeaseId)
   const parkingAvailable = linkedIncludedAvailable(selectedProperty, leases, 'parking_property_id', excludeLeaseId)
   const warehouseName = linkedWarehouseId
-    ? properties?.data.find((p) => p.id === linkedWarehouseId)?.name ?? 'Bodega vinculada'
+    ? propertyLinkLabel(properties?.data.find((p) => p.id === linkedWarehouseId) ?? { name: 'Bodega vinculada' })
     : ''
   const parkingName = linkedParkingId
-    ? properties?.data.find((p) => p.id === linkedParkingId)?.name ?? 'Estacionamiento vinculado'
+    ? propertyLinkLabel(properties?.data.find((p) => p.id === linkedParkingId) ?? { name: 'Estacionamiento vinculado' })
     : ''
 
   const onPropertyChange = (propertyId: string) => {
@@ -334,7 +334,7 @@ function LeaseFormFields({
         <FormField label="Inicio"><Input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} /></FormField>
         <FormField label="Fin"><Input type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} /></FormField>
       </div>
-      <FormField label="Renta mensual (CLP)"><Input type="number" required value={form.monthly_rent} onChange={(e) => setForm({ ...form, monthly_rent: e.target.value })} /></FormField>
+      <FormField label="Arriendo mensual (CLP)"><Input type="number" required value={form.monthly_rent} onChange={(e) => setForm({ ...form, monthly_rent: e.target.value })} /></FormField>
       <FormField label="Día de pago"><Input type="number" min={1} max={28} value={form.payment_day} onChange={(e) => setForm({ ...form, payment_day: e.target.value })} /></FormField>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={form.ipc_adjustment} onChange={(e) => setForm({ ...form, ipc_adjustment: e.target.checked })} />
@@ -359,7 +359,12 @@ export function LeasesPage() {
   const { data: tenants } = useQuery({ queryKey: ['tenants'], queryFn: () => api.getTenants() })
 
   const propertyMap = useMemo(
-    () => new Map((properties?.data ?? []).map((p) => [p.id, p.name])),
+    () => new Map(
+      (properties?.data ?? []).map((p) => [
+        p.id,
+        p.type === 'parking' || p.type === 'warehouse' ? propertyLinkLabel(p) : p.name,
+      ]),
+    ),
     [properties],
   )
   const tenantMap = useMemo(
@@ -558,7 +563,7 @@ export function LeasesPage() {
                     <th className="p-4 font-medium">Arrendatario</th>
                     <th className="p-4 font-medium">Inicio</th>
                     <th className="p-4 font-medium">Fin</th>
-                    <th className="p-4 font-medium">Renta</th>
+                    <th className="p-4 font-medium">Arriendo</th>
                     <th className="p-4 font-medium">IPC</th>
                     <th className="p-4 font-medium">Día pago</th>
                     <th className="p-4 font-medium w-24">Acciones</th>

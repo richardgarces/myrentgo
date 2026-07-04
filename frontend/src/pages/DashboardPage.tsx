@@ -6,7 +6,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { LoadingSkeleton } from '@/components/ui/page'
 import { api } from '@/lib/api'
 import { formatCurrency, formatDate, formatMonthLabel, formatUF } from '@/lib/utils'
-import { Building2, TrendingUp, AlertTriangle, Wallet, FileText, Banknote, Landmark, Scale, Home, Clock, ArrowRight } from 'lucide-react'
+import { CLPWithUF, UFIndicatorNote, UFWithCLP } from '@/components/UFWithCLP'
+import { MetricTitleWithHelp } from '@/components/MetricHelp'
+import { dashboardMetricHelp } from '@/lib/dashboard-metric-help'
+import { Building2, TrendingUp, AlertTriangle, Wallet, FileText, Banknote, Landmark, Scale, Home, Clock, ArrowRight, CreditCard } from 'lucide-react'
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
 
@@ -43,11 +46,19 @@ export function DashboardPage() {
 
   if (isLoading && !data) return <LoadingSkeleton />
 
-  const stats = [
-    { label: 'Propiedades', value: data?.total_properties ?? 0, icon: Building2, href: '/properties' },
-    { label: t('dashboard.occupancy'), value: `${(data?.occupancy_rate ?? 0).toFixed(1)}%`, icon: TrendingUp, href: '/properties?disponibles=1' },
+  const stats: Array<{
+    label: string
+    help: string
+    value: string | number
+    subtitle?: string
+    icon: typeof Building2
+    href?: string
+  }> = [
+    { label: 'Propiedades', help: dashboardMetricHelp.totalProperties, value: data?.total_properties ?? 0, icon: Building2, href: '/properties' },
+    { label: t('dashboard.occupancy'), help: dashboardMetricHelp.occupancy, value: `${(data?.occupancy_rate ?? 0).toFixed(1)}%`, icon: TrendingUp, href: '/properties?disponibles=1' },
     {
       label: t('dashboard.overdue'),
+      help: dashboardMetricHelp.overdue,
       value: data?.overdue_payments ?? 0,
       subtitle: (data?.overdue_payments ?? 0) > 0 ? t('dashboard.overdueCount', { count: data?.overdue_payments ?? 0 }) : undefined,
       icon: AlertTriangle,
@@ -55,6 +66,7 @@ export function DashboardPage() {
     },
     {
       label: t('dashboard.pendingPayments'),
+      help: dashboardMetricHelp.pendingPayments,
       value: data?.pending_payments_count ?? 0,
       subtitle: (data?.total_rent_pending ?? 0) > 0
         ? t('dashboard.rentPendingSubtitle', { amount: formatCurrency(data?.total_rent_pending ?? 0) })
@@ -62,37 +74,60 @@ export function DashboardPage() {
       icon: Clock,
       href: '/payments',
     },
-    { label: t('dashboard.cashFlow'), value: formatCurrency(data?.net_cash_flow ?? 0), icon: Wallet },
+    { label: t('dashboard.cashFlow'), help: dashboardMetricHelp.cashFlow, value: formatCurrency(data?.net_cash_flow ?? 0), icon: Wallet },
   ]
 
-  const portfolioStats = [
+  const portfolioStats: Array<{
+    label: string
+    help: string
+    value?: string
+    clpAmount?: number
+    ufAmount?: number
+    ufSuffix?: string
+    icon: typeof Building2
+    href?: string
+  }> = [
     {
       label: t('dashboard.activeLeases'),
-      value: data?.active_leases ?? 0,
+      help: dashboardMetricHelp.activeLeases,
+      value: String(data?.active_leases ?? 0),
       icon: FileText,
       href: '/leases',
     },
     {
       label: t('dashboard.totalMonthlyRent'),
-      value: formatCurrency(data?.total_monthly_rent ?? 0),
+      help: dashboardMetricHelp.totalMonthlyRent,
+      clpAmount: data?.total_monthly_rent ?? 0,
       icon: Banknote,
       href: '/leases',
     },
     {
       label: t('dashboard.totalValueUF'),
-      value: formatUF(data?.total_value_uf ?? 0),
+      help: dashboardMetricHelp.totalValueUF,
+      ufAmount: data?.total_value_uf ?? 0,
       icon: Landmark,
       href: '/properties',
     },
     {
       label: t('dashboard.totalDebtUF'),
-      value: formatUF(data?.total_debt_uf ?? 0),
+      help: dashboardMetricHelp.totalDebtUF,
+      ufAmount: data?.total_debt_uf ?? 0,
       icon: Scale,
     },
     {
+      label: t('dashboard.totalOriginalLoanUF'),
+      help: dashboardMetricHelp.totalOriginalLoanUF,
+      ufAmount: data?.total_original_loan_uf ?? 0,
+      icon: CreditCard,
+      href: '/properties',
+    },
+    {
       label: t('dashboard.totalMortgageUF'),
-      value: `${formatUF(data?.total_monthly_mortgage_uf ?? 0)}/mes`,
+      help: dashboardMetricHelp.totalMortgageUF,
+      ufAmount: data?.total_monthly_mortgage_uf ?? 0,
+      ufSuffix: '/mes',
       icon: Home,
+      href: '/dividends',
     },
   ]
 
@@ -121,6 +156,14 @@ export function DashboardPage() {
     { name: t('dashboard.rentPending'), value: rentPending },
   ].filter((item) => item.value > 0)
 
+  const dividendMonthLabel = data?.dividend_month ? formatMonthLabel(data.dividend_month) : rentMonthLabel
+  const dividendPaid = data?.total_dividend_paid_uf ?? 0
+  const dividendPending = data?.total_dividend_pending_uf ?? 0
+  const dividendChartData = [
+    { name: t('dashboard.dividendsPaid'), value: dividendPaid },
+    { name: t('dashboard.dividendsPending'), value: dividendPending },
+  ].filter((item) => item.value > 0)
+
   const typeBreakdown = data?.properties_by_type ?? []
 
   return (
@@ -128,7 +171,7 @@ export function DashboardPage() {
       <h1 className="text-2xl font-bold tracking-tight">{t('dashboard.title')}</h1>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-        {stats.map(({ label, value, subtitle, icon: Icon, href }) => (
+        {stats.map(({ label, help, value, subtitle, icon: Icon, href }) => (
           <Card
             key={label}
             role={href ? 'button' : undefined}
@@ -138,7 +181,9 @@ export function DashboardPage() {
             className={href ? 'hover:shadow-md transition-shadow cursor-pointer hover:border-primary/40' : undefined}
           >
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                <MetricTitleWithHelp title={label} help={help} />
+              </CardTitle>
               <Icon className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -152,9 +197,11 @@ export function DashboardPage() {
       </div>
 
       <div>
-        <h2 className="text-lg font-semibold mb-3">{t('dashboard.portfolioTotals')}</h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-          {portfolioStats.map(({ label, value, icon: Icon, href }) => (
+        <h2 className="text-lg font-semibold mb-3">
+          <MetricTitleWithHelp title={t('dashboard.portfolioTotals')} help={dashboardMetricHelp.portfolioTotals} />
+        </h2>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          {portfolioStats.map(({ label, help, value, clpAmount, ufAmount, ufSuffix, icon: Icon, href }) => (
             <Card
               key={label}
               role={href ? 'button' : undefined}
@@ -164,21 +211,32 @@ export function DashboardPage() {
               className={href ? 'hover:shadow-md transition-shadow cursor-pointer hover:border-primary/40' : undefined}
             >
               <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  <MetricTitleWithHelp title={label} help={help} />
+                </CardTitle>
                 <Icon className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{value}</div>
+                {ufAmount != null ? (
+                  <UFWithCLP amount={ufAmount} suffix={ufSuffix} />
+                ) : clpAmount != null ? (
+                  <CLPWithUF amount={clpAmount} />
+                ) : (
+                  <div className="text-2xl font-bold">{value}</div>
+                )}
               </CardContent>
             </Card>
           ))}
         </div>
+        <UFIndicatorNote help={dashboardMetricHelp.ufIndicator} />
       </div>
 
       {typeBreakdown.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">{t('dashboard.propertiesByType')}</CardTitle>
+            <CardTitle className="text-base">
+              <MetricTitleWithHelp title={t('dashboard.propertiesByType')} help={dashboardMetricHelp.propertiesByType} />
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-2">
@@ -196,10 +254,12 @@ export function DashboardPage() {
         </Card>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">{t('dashboard.cashFlow')}</CardTitle>
+            <CardTitle className="text-base">
+              <MetricTitleWithHelp title={t('dashboard.cashFlow')} help={dashboardMetricHelp.cashFlowChart} />
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={250}>
@@ -217,7 +277,9 @@ export function DashboardPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">{t('dashboard.rentPaidVsPending')}</CardTitle>
+            <CardTitle className="text-base">
+              <MetricTitleWithHelp title={t('dashboard.rentPaidVsPending')} help={dashboardMetricHelp.rentPaidVsPending} />
+            </CardTitle>
             <p className="text-xs text-muted-foreground font-medium">{rentMonthLabel}</p>
             <p className="text-xs text-muted-foreground">{t('dashboard.rentCurrentMonth')}</p>
           </CardHeader>
@@ -267,12 +329,71 @@ export function DashboardPage() {
         <Card
           role="button"
           tabIndex={0}
+          onClick={() => navigate('/dividends')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate('/dividends') } }}
+          className="hover:shadow-md transition-shadow cursor-pointer hover:border-primary/40"
+        >
+          <CardHeader>
+            <CardTitle className="text-base">
+              <MetricTitleWithHelp title={t('dashboard.dividendsPaidVsPending')} help={dashboardMetricHelp.dividendsPaidVsPending} />
+            </CardTitle>
+            <p className="text-xs text-muted-foreground font-medium">{dividendMonthLabel}</p>
+            <p className="text-xs text-muted-foreground">{t('dashboard.dividendsCurrentMonth')}</p>
+          </CardHeader>
+          <CardContent className="flex flex-col items-center">
+            {dividendPaid === 0 && dividendPending === 0 ? (
+              <p className="text-sm text-muted-foreground py-16">Sin dividendos este mes</p>
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height={220}>
+                  <PieChart>
+                    <Pie
+                      data={dividendChartData.length > 0 ? dividendChartData : [{ name: t('dashboard.dividendsPaid'), value: 1 }]}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={90}
+                      dataKey="value"
+                      label={({ name, value }) => `${name}: ${formatUF(value)}`}
+                    >
+                      <Cell fill="#3b82f6" />
+                      <Cell fill="#f59e0b" />
+                    </Pie>
+                    <Tooltip formatter={(v: number) => formatUF(v)} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="flex flex-wrap justify-center gap-4 text-sm mt-2">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-full bg-blue-500" />
+                    {t('dashboard.dividendsPaid')}: {formatUF(dividendPaid)}
+                    {(data?.total_dividend_paid_count ?? 0) > 0 && (
+                      <span className="text-muted-foreground">({data?.total_dividend_paid_count})</span>
+                    )}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+                    {t('dashboard.dividendsPending')}: {formatUF(dividendPending)}
+                    {(data?.total_dividend_pending_count ?? 0) > 0 && (
+                      <span className="text-muted-foreground">({data?.total_dividend_pending_count})</span>
+                    )}
+                  </span>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card
+          role="button"
+          tabIndex={0}
           onClick={() => navigate('/properties?disponibles=1')}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate('/properties?disponibles=1') } }}
           className="hover:shadow-md transition-shadow cursor-pointer hover:border-primary/40"
         >
           <CardHeader>
-            <CardTitle className="text-base">{t('dashboard.occupancy')}</CardTitle>
+            <CardTitle className="text-base">
+              <MetricTitleWithHelp title={t('dashboard.occupancy')} help={dashboardMetricHelp.occupancyChart} />
+            </CardTitle>
           </CardHeader>
           <CardContent className="flex justify-center">
             <ResponsiveContainer width="100%" height={250}>
@@ -292,7 +413,9 @@ export function DashboardPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-base">{t('dashboard.pendingPayments')}</CardTitle>
+            <CardTitle className="text-base">
+              <MetricTitleWithHelp title={t('dashboard.pendingPayments')} help={dashboardMetricHelp.pendingPaymentsList} />
+            </CardTitle>
             {(data?.pending_payments_count ?? 0) > 0 && (
               <button
                 type="button"
@@ -349,7 +472,9 @@ export function DashboardPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">{t('dashboard.expirations')}</CardTitle>
+            <CardTitle className="text-base">
+              <MetricTitleWithHelp title={t('dashboard.expirations')} help={dashboardMetricHelp.expirations} />
+            </CardTitle>
           </CardHeader>
           <CardContent>
             {(data?.upcoming_expirations?.length ?? 0) === 0 ? (

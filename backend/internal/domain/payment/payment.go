@@ -32,6 +32,8 @@ type Payment struct {
 	PropertyID     string       `json:"property_id,omitempty" bson:"property_id,omitempty"`
 	LeaseID        string       `json:"lease_id,omitempty" bson:"lease_id,omitempty"`
 	TenantID       string       `json:"tenant_id,omitempty" bson:"tenant_id,omitempty"`
+	BankID         string       `json:"bank_id,omitempty" bson:"bank_id,omitempty"`
+	BankName       string       `json:"bank_name,omitempty" bson:"bank_name,omitempty"`
 	Type           Type         `json:"type" bson:"type"`
 	Status         Status       `json:"status" bson:"status"`
 	Amount         shared.Money `json:"amount" bson:"amount"`
@@ -39,6 +41,8 @@ type Payment struct {
 	PaidDate       *time.Time   `json:"paid_date,omitempty" bson:"paid_date,omitempty"`
 	Reference      string       `json:"reference,omitempty" bson:"reference,omitempty"`
 	Notes          string       `json:"notes,omitempty" bson:"notes,omitempty"`
+	PacEnabled     bool         `json:"pac_enabled,omitempty" bson:"pac_enabled,omitempty"`
+	PaymentBank    string       `json:"payment_bank,omitempty" bson:"payment_bank,omitempty"`
 }
 
 func NewPayment(orgID string, pType Type, amount shared.Money, due time.Time) *Payment {

@@ -149,6 +149,33 @@ func (r *PropertyRepo) List(ctx context.Context, orgID string, filter apppropert
 	return items, total, nil
 }
 
+func (r *PropertyRepo) ListWithMortgage(ctx context.Context, orgID string) ([]domainprop.Property, error) {
+	query := bson.M{
+		"organization_id": orgID,
+		"$or": bson.A{
+			bson.M{"financials.monthly_mortgage_uf": bson.M{"$gt": 0}},
+			bson.M{"financials.monthly_mortgage.amount": bson.M{"$gt": 0}},
+		},
+	}
+	cursor, err := r.col.Find(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var items []domainprop.Property
+	if err := cursor.All(ctx, &items); err != nil {
+		return nil, err
+	}
+	if items == nil {
+		items = []domainprop.Property{}
+	}
+	for i := range items {
+		items[i].Financials.NormalizeMortgageUF()
+	}
+	return items, nil
+}
+
 func (r *PropertyRepo) Update(ctx context.Context, p *domainprop.Property) error {
 	p.Touch()
 	_, err := r.col.ReplaceOne(ctx, bson.M{"_id": p.ID, "organization_id": p.OrganizationID}, p)

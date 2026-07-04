@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# MyRent Go — menú interactivo para desarrollo local
-# Uso: ./myrent.sh
+# MyRent Go — menú interactivo para desarrollo local (principal + submenús)
+# Uso: ./myrent.sh  |  Atajos CLI: ./myrent.sh git-status, start, quickstart, …
 #
 
 set -euo pipefail
@@ -46,6 +46,8 @@ header() {
   echo -e "  App:    ${BOLD}${APP_URL}${NC}"
   echo -e "  API:    http://localhost:${API_PORT}"
   echo -e "  Login:  ${BOLD}${ADMIN_USER}${NC} / ${BOLD}${ADMIN_PASS}${NC}"
+  echo ""
+  echo -e "  ${YELLOW}Navegación:${NC} menú principal → submenús  |  ${BOLD}0${NC} = volver o salir"
   echo ""
 }
 
@@ -242,12 +244,12 @@ do_bootstrap_admin() {
   if [[ "$force" == "1" ]]; then
     warn "Recreando usuario admin..."
     if ! (cd "${ROOT_DIR}/backend" && SEED_FORCE=1 go run ./cmd/seed); then
-      error "Bootstrap falló. Verifica que MongoDB esté corriendo (opción 11 del menú)."
+      error "Bootstrap falló. Verifica que MongoDB esté corriendo (menú «Base de datos y servicios» → Solo MongoDB)."
       return 1
     fi
   else
     if ! (cd "${ROOT_DIR}/backend" && go run ./cmd/seed); then
-      error "Bootstrap falló. Verifica que MongoDB esté corriendo (opción 11 del menú)."
+      error "Bootstrap falló. Verifica que MongoDB esté corriendo (menú «Base de datos y servicios» → Solo MongoDB)."
       return 1
     fi
   fi
@@ -483,7 +485,7 @@ do_status() {
 
   if port_in_use "$FRONTEND_PORT" && ! curl -sf "http://localhost:${API_PORT}/health" &>/dev/null; then
     echo ""
-    warn "Frontend activo pero API no responde — el login fallará. Usa opción 12 para levantar la API."
+    warn "Frontend activo pero API no responde — el login fallará. Usa «Base de datos y servicios» → Solo API."
   fi
 
   echo ""
@@ -574,53 +576,315 @@ do_quickstart() {
   [[ "${SKIP_PAUSE:-}" != "1" ]] && pause
 }
 
-# ─── Menú principal ───────────────────────────────────────────────────────────
 
-show_menu() {
+# ─── Git / GitHub ─────────────────────────────────────────────────────────────
+
+git_in_repo() {
+  if ! git -C "$ROOT_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
+    error "No es un repositorio Git: $ROOT_DIR"
+    return 1
+  fi
+}
+
+gh_available() {
+  command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1
+}
+
+do_git_status() {
   header
-  echo "    1)  Inicio rápido (instalar + admin + levantar + navegador)"
-  echo "    2)  Instalar dependencias"
-  echo "    3)  Build (compilar backend + frontend)"
-  echo "    4)  Crear admin (admin / admin123)"
-  echo "    5)  Levantar todo (MongoDB + API + Frontend)"
-  echo "    6)  Detener servicios"
-  echo "    7)  Ver logs"
-  echo "    8)  Abrir navegador"
-  echo "    9)  Estado de servicios"
-  echo "    10) Ejecutar tests"
+  echo "  Git — estado del repositorio"
   echo ""
-  echo "    ── Servicios individuales ──"
-  echo "    11) Solo MongoDB"
-  echo "    12) Solo API"
-  echo "    13) Solo Frontend"
-  echo "    14) Reiniciar API y Frontend"
+  git_in_repo || { pause; return 1; }
+  (cd "$ROOT_DIR" && git status)
+  echo ""
+  if gh_available; then
+    info "GitHub CLI (gh) disponible y autenticado"
+  else
+    warn "gh no disponible o sin sesión — solo comandos git"
+  fi
+  pause
+}
+
+do_git_commit() {
+  header
+  echo "  Git — agregar y commit"
+  echo ""
+  git_in_repo || { pause; return 1; }
+
+  if [[ -z "$(cd "$ROOT_DIR" && git status --porcelain)" ]]; then
+    warn "No hay cambios para commitear"
+    pause
+    return 0
+  fi
+
+  echo "  Cambios pendientes:"
+  (cd "$ROOT_DIR" && git status --short)
+  echo ""
+
+  read -r -p "  Mensaje de commit [chore: actualización desde myrent.sh]: " msg
+  msg="${msg:-chore: actualización desde myrent.sh}"
+
+  read -r -p "  ¿Agregar todos los archivos (git add -A)? [S/n]: " add_all
+  if [[ ! "$add_all" =~ ^[Nn]$ ]]; then
+    (cd "$ROOT_DIR" && git add -A) || { pause; return 1; }
+  else
+    read -r -p "  Rutas a agregar (espacio entre archivos): " -a paths
+    if [[ ${#paths[@]} -eq 0 ]]; then
+      warn "No se indicaron rutas"
+      pause
+      return 1
+    fi
+    (cd "$ROOT_DIR" && git add -- "${paths[@]}") || { pause; return 1; }
+  fi
+
+  if (cd "$ROOT_DIR" && git commit -m "$msg"); then
+    info "Commit creado"
+  else
+    error "Commit falló"
+  fi
+  pause
+}
+
+do_git_push() {
+  header
+  echo "  Git — push a GitHub (origin)"
+  echo ""
+  git_in_repo || { pause; return 1; }
+
+  local branch
+  branch=$(cd "$ROOT_DIR" && git branch --show-current)
+  if [[ -z "$branch" ]]; then
+    error "No se pudo determinar la rama actual"
+    pause
+    return 1
+  fi
+
+  info "Rama: ${branch}"
+  if ! (cd "$ROOT_DIR" && git remote get-url origin &>/dev/null); then
+    error "No hay remoto 'origin'. Configura con: git remote add origin <url>"
+    pause
+    return 1
+  fi
+
+  if gh_available; then
+    info "gh detectado — push con git (origin)"
+  fi
+
+  if (cd "$ROOT_DIR" && git push -u origin "$branch"); then
+    info "Push completado → origin/${branch}"
+    if gh_available; then
+      echo ""
+      gh repo view 2>/dev/null | sed 's/^/    /' || true
+    fi
+  else
+    error "Push falló. Revisa credenciales, rama y remoto (menú «Git / GitHub» → Ver remoto y rama actual)."
+  fi
+  pause
+}
+
+do_git_pull() {
+  header
+  echo "  Git — pull desde origin"
+  echo ""
+  git_in_repo || { pause; return 1; }
+
+  local branch
+  branch=$(cd "$ROOT_DIR" && git branch --show-current)
+  info "Rama actual: ${branch:-desconocida}"
+
+  if (cd "$ROOT_DIR" && git pull --rebase origin "${branch:-}"); then
+    info "Pull completado"
+  else
+    error "Pull falló"
+  fi
+  pause
+}
+
+do_git_remote_info() {
+  header
+  echo "  Git — remoto y rama"
+  echo ""
+  git_in_repo || { pause; return 1; }
+
+  echo "  Remotos:"
+  (cd "$ROOT_DIR" && git remote -v) | sed 's/^/    /'
+  echo ""
+  echo "  Ramas:"
+  (cd "$ROOT_DIR" && git branch -vv) | sed 's/^/    /'
+  echo ""
+
+  if gh_available; then
+    echo "  GitHub (gh repo view):"
+    gh repo view 2>/dev/null | sed 's/^/    /' || warn "No se pudo obtener info del repo con gh"
+  fi
+  pause
+}
+
+do_git_create_branch() {
+  header
+  echo "  Git — crear y cambiar de rama"
+  echo ""
+  git_in_repo || { pause; return 1; }
+
+  read -r -p "  Nombre de la nueva rama: " new_branch
+  if [[ -z "$new_branch" ]]; then
+    warn "Nombre vacío"
+    pause
+    return 1
+  fi
+
+  if (cd "$ROOT_DIR" && git checkout -b "$new_branch"); then
+    info "Rama creada y activa: $new_branch"
+    read -r -p "  ¿Push y establecer upstream en origin? [s/N]: " push_new
+    if [[ "$push_new" =~ ^[Ss]$ ]]; then
+      (cd "$ROOT_DIR" && git push -u origin "$new_branch") && info "Upstream configurado" || error "Push falló"
+    fi
+  else
+    error "No se pudo crear la rama"
+  fi
+  pause
+}
+
+
+# ─── Menús (principal + submenús) ─────────────────────────────────────────────
+
+show_main_menu() {
+  header
+  echo -e "  ${BOLD}Menú principal${NC}"
+  echo ""
+  echo "    1)  Desarrollo e inicio"
+  echo "    2)  Base de datos y servicios"
+  echo "    3)  Git / GitHub"
+  echo "    4)  Utilidades"
   echo ""
   echo "    0)  Salir"
   echo ""
 }
 
+menu_desarrollo() {
+  while true; do
+    header
+    echo -e "  ${BOLD}Desarrollo e inicio${NC}"
+    echo ""
+    echo "    1)  Inicio rápido (instalar + admin + levantar + navegador)"
+    echo "    2)  Instalar dependencias"
+    echo "    3)  Build (compilar backend + frontend)"
+    echo "    4)  Levantar todo (MongoDB + API + Frontend)"
+    echo "    5)  Detener servicios"
+    echo "    6)  Reiniciar API y Frontend"
+    echo ""
+    echo "    0)  Volver al menú principal"
+    echo ""
+    read -r -p "  Opción: " opt
+    echo ""
+
+    case "$opt" in
+      1) do_quickstart; [[ $? -ne 0 ]] && pause ;;
+      2) do_install ;;
+      3) do_build ;;
+      4) do_start_all; [[ $? -ne 0 ]] && pause ;;
+      5) do_stop_all ;;
+      6) do_restart_services; [[ $? -ne 0 ]] && pause ;;
+      0) return ;;
+      *) warn "Opción inválida"; sleep 1 ;;
+    esac
+  done
+}
+
+menu_base_datos() {
+  while true; do
+    header
+    echo -e "  ${BOLD}Base de datos y servicios${NC}"
+    echo ""
+    echo "    1)  Crear admin (admin / admin123)"
+    echo "    2)  Solo MongoDB"
+    echo "    3)  Solo API"
+    echo "    4)  Solo Frontend"
+    echo ""
+    echo "    0)  Volver al menú principal"
+    echo ""
+    read -r -p "  Opción: " opt
+    echo ""
+
+    case "$opt" in
+      1) do_bootstrap_admin ;;
+      2) mongo_start; [[ $? -ne 0 ]] && pause || pause ;;
+      3) api_start; [[ $? -ne 0 ]] && pause || pause ;;
+      4) frontend_start; [[ $? -ne 0 ]] && pause || pause ;;
+      0) return ;;
+      *) warn "Opción inválida"; sleep 1 ;;
+    esac
+  done
+}
+
+menu_git() {
+  while true; do
+    header
+    echo -e "  ${BOLD}Git / GitHub${NC}"
+    echo ""
+    echo "    1)  Estado (git status)"
+    echo "    2)  Agregar y commit"
+    echo "    3)  Push a origin (GitHub)"
+    echo "    4)  Pull desde origin"
+    echo "    5)  Ver remoto y rama actual"
+    echo "    6)  Crear rama"
+    echo ""
+    echo "    0)  Volver al menú principal"
+    echo ""
+    read -r -p "  Opción: " opt
+    echo ""
+
+    case "$opt" in
+      1) do_git_status ;;
+      2) do_git_commit ;;
+      3) do_git_push ;;
+      4) do_git_pull ;;
+      5) do_git_remote_info ;;
+      6) do_git_create_branch ;;
+      0) return ;;
+      *) warn "Opción inválida"; sleep 1 ;;
+    esac
+  done
+}
+
+menu_utilidades() {
+  while true; do
+    header
+    echo -e "  ${BOLD}Utilidades${NC}"
+    echo ""
+    echo "    1)  Ver logs"
+    echo "    2)  Estado de servicios"
+    echo "    3)  Abrir navegador"
+    echo "    4)  Ejecutar tests"
+    echo ""
+    echo "    0)  Volver al menú principal"
+    echo ""
+    read -r -p "  Opción: " opt
+    echo ""
+
+    case "$opt" in
+      1) do_logs_menu ;;
+      2) do_status ;;
+      3) do_open_browser ;;
+      4) do_test ;;
+      0) return ;;
+      *) warn "Opción inválida"; sleep 1 ;;
+    esac
+  done
+}
+
 main_menu() {
   set +e
   while true; do
-    show_menu
+    show_main_menu
     read -r -p "  Selecciona una opción: " opt
     echo ""
 
     case "$opt" in
-      1)  do_quickstart; [[ $? -ne 0 ]] && pause ;;
-      2)  do_install ;;
-      3)  do_build ;;
-      4)  do_bootstrap_admin ;;
-      5)  do_start_all; [[ $? -ne 0 ]] && pause ;;
-      6)  do_stop_all ;;
-      7)  do_logs_menu ;;
-      8)  do_open_browser ;;
-      9)  do_status ;;
-      10) do_test ;;
-      11) mongo_start; [[ $? -ne 0 ]] && pause || pause ;;
-      12) api_start; [[ $? -ne 0 ]] && pause || pause ;;
-      13) frontend_start; [[ $? -ne 0 ]] && pause || pause ;;
-      14) do_restart_services; [[ $? -ne 0 ]] && pause ;;
+      1) menu_desarrollo ;;
+      2) menu_base_datos ;;
+      3) menu_git ;;
+      4) menu_utilidades ;;
       0)
         echo "  Hasta pronto."
         exit 0
@@ -650,8 +914,12 @@ if [[ "${1:-}" != "" ]]; then
     quickstart) SKIP_PAUSE=1 do_quickstart ;;
     api)        SKIP_PAUSE=1 api_start ;;
     frontend)   SKIP_PAUSE=1 frontend_start ;;
+    git-status) do_git_status ;;
+    git-commit) do_git_commit ;;
+    git-push)   do_git_push ;;
+    git-pull)   do_git_pull ;;
     *)
-      echo "Uso: $0 [install|build|bootstrap|start|stop|restart|status|logs|open|test|quickstart|api|frontend]"
+      echo "Uso: $0 [install|build|bootstrap|start|stop|restart|status|logs|open|test|quickstart|api|frontend|git-status|git-commit|git-push|git-pull]"
       exit 1
       ;;
   esac

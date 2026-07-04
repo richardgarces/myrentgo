@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Plus, FileText } from 'lucide-react'
+import { Plus, FileText, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FormDialog, FormField, FormSelect } from '@/components/ui/form-dialog'
@@ -33,6 +33,22 @@ function documentToForm(doc: Document): DocumentForm {
   }
 }
 
+async function downloadDocumentFile(doc: Pick<Document, 'id' | 'file_name' | 'file_data'>) {
+  let fileData = doc.file_data
+  const fileName = doc.file_name || 'documento'
+  if (!fileData) {
+    const full = await api.getDocument(doc.id)
+    fileData = full.file_data
+  }
+  if (!fileData) return
+  const link = document.createElement('a')
+  link.href = fileData
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+}
+
 function formToPayload(form: DocumentForm) {
   return {
     title: form.title,
@@ -52,10 +68,12 @@ function DocumentFormFields({
   form,
   setForm,
   properties,
+  documentId,
 }: {
   form: DocumentForm
   setForm: (form: DocumentForm) => void
   properties?: { data: { id: string; name: string }[] }
+  documentId?: string | null
 }) {
   return (
     <>
@@ -105,13 +123,41 @@ function DocumentFormFields({
             e.target.value = ''
           }}
         />
-        {form.file_name && <p className="text-xs text-muted-foreground mt-1">{form.file_name}</p>}
+        {form.file_name && (
+          <div className="mt-1 flex items-center gap-2">
+            <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{form.file_name}</p>
+            {(form.file_data || documentId) && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0 h-7 text-xs"
+                onClick={() => void downloadDocumentFile({
+                  id: documentId ?? '',
+                  file_name: form.file_name,
+                  file_data: form.file_data || undefined,
+                })}
+              >
+                <Download className="h-3.5 w-3.5" />
+                Descargar
+              </Button>
+            )}
+          </div>
+        )}
       </FormField>
     </>
   )
 }
 
-function DocumentCard({ doc, onEdit }: { doc: Document; onEdit: (doc: Document) => void }) {
+function DocumentCard({
+  doc,
+  onEdit,
+  onDownload,
+}: {
+  doc: Document
+  onEdit: (doc: Document) => void
+  onDownload: (doc: Document) => void
+}) {
   return (
     <Card
       role="button"
@@ -137,7 +183,24 @@ function DocumentCard({ doc, onEdit }: { doc: Document; onEdit: (doc: Document) 
           <p className="text-xs text-muted-foreground">{categoryLabels[doc.category] || doc.category} · v{doc.version}</p>
         </div>
       </CardHeader>
-      <CardContent className="text-sm text-muted-foreground"><p>{doc.file_name}</p></CardContent>
+      <CardContent className="flex items-center justify-between gap-2 text-sm text-muted-foreground">
+        <p className="min-w-0 truncate">{doc.file_name}</p>
+        {doc.file_name && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="shrink-0 h-8"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDownload(doc)
+            }}
+          >
+            <Download className="h-4 w-4" />
+            Descargar
+          </Button>
+        )}
+      </CardContent>
     </Card>
   )
 }
@@ -220,7 +283,12 @@ export function DocumentsPage() {
       />
       <div className="grid gap-4 sm:grid-cols-2">
         {data?.data.map((doc) => (
-          <DocumentCard key={doc.id} doc={doc} onEdit={openEdit} />
+          <DocumentCard
+            key={doc.id}
+            doc={doc}
+            onEdit={openEdit}
+            onDownload={(d) => void downloadDocumentFile(d)}
+          />
         ))}
       </div>
       {!data?.data.length && <EmptyState message="Sin documentos registrados." />}
@@ -258,7 +326,7 @@ export function DocumentsPage() {
           </div>
         ) : undefined}
       >
-        <DocumentFormFields form={form} setForm={setForm} properties={properties} />
+        <DocumentFormFields form={form} setForm={setForm} properties={properties} documentId={editingId} />
         {mutationError && <p className="text-sm text-destructive">{(mutationError as Error).message}</p>}
       </FormDialog>
 

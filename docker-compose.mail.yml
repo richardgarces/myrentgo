@@ -1,0 +1,11 @@
+# Servidor SMTP local para desarrollo (Mailpit).
+# Uso: docker compose -f docker-compose.mail.yml up -d
+# Web UI: http://localhost:8025  |  SMTP: localhost:1025 (sin autenticación)
+services:
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: myrent-mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"

@@ -13,6 +13,7 @@ const PropertiesPage = lazy(() => import('@/pages/PropertiesPage').then((m) => (
 const LeasesPage = lazy(() => import('@/pages/LeasesPage').then((m) => ({ default: m.LeasesPage })))
 const TenantsPage = lazy(() => import('@/pages/TenantsPage').then((m) => ({ default: m.TenantsPage })))
 const PaymentsPage = lazy(() => import('@/pages/PaymentsPage').then((m) => ({ default: m.PaymentsPage })))
+const DividendsPage = lazy(() => import('@/pages/DividendsPage').then((m) => ({ default: m.DividendsPage })))
 const FinancePage = lazy(() => import('@/pages/FinancePage').then((m) => ({ default: m.FinancePage })))
 const DocumentsPage = lazy(() => import('@/pages/DocumentsPage').then((m) => ({ default: m.DocumentsPage })))
 const CalendarPage = lazy(() => import('@/pages/CalendarPage').then((m) => ({ default: m.CalendarPage })))
@@ -20,6 +21,7 @@ const CrmPage = lazy(() => import('@/pages/CrmPage').then((m) => ({ default: m.C
 const MaintenancePage = lazy(() => import('@/pages/MaintenancePage').then((m) => ({ default: m.MaintenancePage })))
 const TicketsPage = lazy(() => import('@/pages/TicketsPage').then((m) => ({ default: m.TicketsPage })))
 const NotificationsPage = lazy(() => import('@/pages/NotificationsPage').then((m) => ({ default: m.NotificationsPage })))
+const EmailNotificationsPage = lazy(() => import('@/pages/EmailNotificationsPage').then((m) => ({ default: m.EmailNotificationsPage })))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 const ExportPage = lazy(() => import('@/pages/ExportPage').then((m) => ({ default: m.ExportPage })))
 
@@ -93,6 +95,7 @@ export default function App() {
             <Route path="leases" element={<PageLoader><LeasesPage /></PageLoader>} />
             <Route path="tenants" element={<PageLoader><TenantsPage /></PageLoader>} />
             <Route path="payments" element={<PageLoader><PaymentsPage /></PageLoader>} />
+            <Route path="dividends" element={<PageLoader><DividendsPage /></PageLoader>} />
             <Route path="finance" element={<PageLoader><FinancePage /></PageLoader>} />
             <Route path="documents" element={<PageLoader><DocumentsPage /></PageLoader>} />
             <Route path="calendar" element={<PageLoader><CalendarPage /></PageLoader>} />
@@ -100,6 +103,7 @@ export default function App() {
             <Route path="maintenance" element={<PageLoader><MaintenancePage /></PageLoader>} />
             <Route path="tickets" element={<PageLoader><TicketsPage /></PageLoader>} />
             <Route path="notifications" element={<PageLoader><NotificationsPage /></PageLoader>} />
+            <Route path="email-notifications" element={<PageLoader><EmailNotificationsPage /></PageLoader>} />
             <Route path="export" element={<PageLoader><ExportPage /></PageLoader>} />
             <Route path="settings" element={<PageLoader><SettingsPage /></PageLoader>} />
           </Route>

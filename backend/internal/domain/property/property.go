@@ -57,8 +57,9 @@ type Property struct {
 	UnitNumber        string         `json:"unit_number,omitempty" bson:"unit_number,omitempty"`
 	Floor             string         `json:"floor,omitempty" bson:"floor,omitempty"`
 	Concierge         ConciergeInfo  `json:"concierge,omitempty" bson:"concierge,omitempty"`
-	UtilityAccounts   UtilityAccounts `json:"utility_accounts,omitempty" bson:"utility_accounts,omitempty"`
-	Deed              DeedInfo       `json:"deed,omitempty" bson:"deed,omitempty"`
+	UtilityAccounts   UtilityAccounts   `json:"utility_accounts,omitempty" bson:"utility_accounts,omitempty"`
+	Insurance         PropertyInsurance `json:"insurance,omitempty" bson:"insurance,omitempty"`
+	Deed              DeedInfo          `json:"deed,omitempty" bson:"deed,omitempty"`
 	Photos            []Photo        `json:"photos" bson:"photos"`
 	Financials        Financials     `json:"financials" bson:"financials"`
 	Tags              []string       `json:"tags,omitempty" bson:"tags,omitempty"`
@@ -73,6 +74,18 @@ type UtilityAccounts struct {
 type UtilityAccount struct {
 	Company    string `json:"company,omitempty" bson:"company,omitempty"`
 	ClientCode string `json:"client_code,omitempty" bson:"client_code,omitempty"`
+}
+
+type PropertyInsurance struct {
+	Fire        InsurancePolicy `json:"fire,omitempty" bson:"fire,omitempty"`
+	Earthquake  InsurancePolicy `json:"earthquake,omitempty" bson:"earthquake,omitempty"`
+	Desgravamen InsurancePolicy `json:"desgravamen,omitempty" bson:"desgravamen,omitempty"`
+}
+
+type InsurancePolicy struct {
+	Company      string  `json:"company,omitempty" bson:"company,omitempty"`
+	AmountUF     float64 `json:"amount_uf,omitempty" bson:"amount_uf,omitempty"`
+	PolicyNumber string  `json:"policy_number,omitempty" bson:"policy_number,omitempty"`
 }
 
 type ConciergeInfo struct {
@@ -106,12 +119,17 @@ type Financials struct {
 	ExpectedRent        shared.Money `json:"expected_rent" bson:"expected_rent"`
 	ValueUF             float64      `json:"value_uf,omitempty" bson:"value_uf,omitempty"`
 	DebtUF              float64      `json:"debt_uf,omitempty" bson:"debt_uf,omitempty"`
+	OriginalLoanUF      float64      `json:"original_loan_uf,omitempty" bson:"original_loan_uf,omitempty"`
 	MonthlyMortgageUF   float64      `json:"monthly_mortgage_uf,omitempty" bson:"monthly_mortgage_uf,omitempty"`
 	legacyMonthlyMortgage shared.Money `bson:"monthly_mortgage,omitempty" json:"-"`
 	LoanTermYears       int          `json:"loan_term_years,omitempty" bson:"loan_term_years,omitempty"`
+	InstallmentsPaid    int          `json:"installments_paid,omitempty" bson:"installments_paid,omitempty"`
 	InterestRate        float64      `json:"interest_rate,omitempty" bson:"interest_rate,omitempty"`
 	BankName            string       `json:"bank_name,omitempty" bson:"bank_name,omitempty"`
+	CreditNumber        string       `json:"credit_number,omitempty" bson:"credit_number,omitempty"`
 	PaymentStartDate    *time.Time   `json:"payment_start_date,omitempty" bson:"payment_start_date,omitempty"`
+	PacEnabled          bool         `json:"pac_enabled,omitempty" bson:"pac_enabled,omitempty"`
+	PaymentBank         string       `json:"payment_bank,omitempty" bson:"payment_bank,omitempty"`
 }
 
 // NormalizeMortgageUF copies legacy monthly_mortgage amounts (stored as CLP Money)

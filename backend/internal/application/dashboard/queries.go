@@ -16,6 +16,7 @@ type DashboardResult struct {
 	OccupancyRate          float64            `json:"occupancy_rate"`
 	MonthlyIncome          float64            `json:"monthly_income"`
 	MonthlyExpenses        float64            `json:"monthly_expenses"`
+	MonthlyExpensesUF      float64            `json:"monthly_expenses_uf,omitempty"`
 	NetCashFlow            float64            `json:"net_cash_flow"`
 	OverduePayments        int                `json:"overdue_payments"`
 	PendingPaymentsCount   int                `json:"pending_payments_count"`
@@ -30,7 +31,14 @@ type DashboardResult struct {
 	TotalMonthlyRent       float64            `json:"total_monthly_rent"`
 	TotalValueUF           float64            `json:"total_value_uf"`
 	TotalDebtUF            float64            `json:"total_debt_uf"`
+	TotalOriginalLoanUF    float64            `json:"total_original_loan_uf"`
 	TotalMonthlyMortgageUF float64            `json:"total_monthly_mortgage_uf"`
+	DividendMonth          string             `json:"dividend_month"`
+	TotalDividendPaidUF    float64            `json:"total_dividend_paid_uf"`
+	TotalDividendPendingUF float64            `json:"total_dividend_pending_uf"`
+	TotalDividendPaidCount int                `json:"total_dividend_paid_count"`
+	TotalDividendPendingCount int             `json:"total_dividend_pending_count"`
+	DividendsByBank        []BankDividendItem `json:"dividends_by_bank"`
 	PropertiesByType       []PropertyTypeCount `json:"properties_by_type"`
 	UpcomingExpirations    []ExpirationItem   `json:"upcoming_expirations"`
 	Profitability          []PropertyProfit   `json:"profitability"`
@@ -39,6 +47,14 @@ type DashboardResult struct {
 type PropertyTypeCount struct {
 	Type  string `json:"type"`
 	Count int    `json:"count"`
+}
+
+type BankDividendItem struct {
+	BankName      string  `json:"bank_name"`
+	BankID        string  `json:"bank_id,omitempty"`
+	PendingUF     float64 `json:"pending_uf"`
+	PaidUF        float64 `json:"paid_uf"`
+	PropertyCount int     `json:"property_count"`
 }
 
 type PendingPaymentItem struct {
@@ -64,6 +80,7 @@ type PropertyProfit struct {
 	PropertyName string  `json:"property_name"`
 	Income       float64 `json:"income"`
 	Expenses     float64 `json:"expenses"`
+	ExpensesUF   float64 `json:"expenses_uf,omitempty"`
 	Profit       float64 `json:"profit"`
 	ROI          float64 `json:"roi"`
 }

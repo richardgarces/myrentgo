@@ -266,6 +266,24 @@ func (r *PaymentRepo) MarkPaid(ctx context.Context, orgID, id string) error {
 	return patchByOrg(ctx, r.col, orgID, id, bson.M{"status": domainpay.StatusPaid, "paid_date": now, "updated_at": now})
 }
 
+func (r *PaymentRepo) ListUnpaidRentForDueDate(ctx context.Context, orgID string, dueDate time.Time) ([]domainpay.Payment, error) {
+	start := time.Date(dueDate.Year(), dueDate.Month(), dueDate.Day(), 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 0, 1)
+	filter := bson.M{
+		"organization_id": orgID,
+		"type":            domainpay.TypeRent,
+		"status":          bson.M{"$in": []domainpay.Status{domainpay.StatusPending, domainpay.StatusOverdue}},
+		"due_date":        bson.M{"$gte": start, "$lt": end},
+	}
+	cursor, err := r.col.Find(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var items []domainpay.Payment
+	return items, cursor.All(ctx, &items)
+}
+
 func (r *PaymentRepo) FindByID(ctx context.Context, orgID, id string) (*domainpay.Payment, error) {
 	var p domainpay.Payment
 	err := r.col.FindOne(ctx, bson.M{"_id": id, "organization_id": orgID}).Decode(&p)
@@ -498,6 +516,56 @@ func (r *MaintenanceRepo) List(ctx context.Context, orgID string, page, limit in
 	})
 }
 
+func (r *MaintenanceRepo) FindByID(ctx context.Context, orgID, id string) (*domainmaint.Maintenance, error) {
+	var m domainmaint.Maintenance
+	err := r.col.FindOne(ctx, bson.M{"_id": id, "organization_id": orgID}).Decode(&m)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, nil
+	}
+	return &m, err
+}
+
+func (r *MaintenanceRepo) ListForScheduledDate(ctx context.Context, orgID string, scheduledDate time.Time, statuses []domainmaint.Status) ([]domainmaint.Maintenance, error) {
+	start := time.Date(scheduledDate.Year(), scheduledDate.Month(), scheduledDate.Day(), 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 0, 1)
+	filter := bson.M{
+		"organization_id": orgID,
+		"scheduled_date":  bson.M{"$gte": start, "$lt": end},
+	}
+	if len(statuses) > 0 {
+		filter["status"] = bson.M{"$in": statuses}
+	}
+	cursor, err := r.col.Find(ctx, filter, options.Find().SetSort(bson.D{{Key: "scheduled_date", Value: 1}}))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var items []domainmaint.Maintenance
+	return items, cursor.All(ctx, &items)
+}
+
+func (r *MaintenanceRepo) ListUpcoming(ctx context.Context, orgID string, statuses []domainmaint.Status) ([]domainmaint.Maintenance, error) {
+	start := truncateDay(time.Now().UTC())
+	filter := bson.M{
+		"organization_id": orgID,
+		"scheduled_date":  bson.M{"$gte": start},
+	}
+	if len(statuses) > 0 {
+		filter["status"] = bson.M{"$in": statuses}
+	}
+	cursor, err := r.col.Find(ctx, filter, options.Find().SetSort(bson.D{{Key: "scheduled_date", Value: 1}}))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var items []domainmaint.Maintenance
+	return items, cursor.All(ctx, &items)
+}
+
+func truncateDay(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
 type TicketRepo struct{ col *mongo.Collection }
 
 func NewTicketRepo(db *Client) *TicketRepo { return &TicketRepo{col: db.Collection("tickets")} }
@@ -522,7 +590,7 @@ func (r *DocumentRepo) Create(ctx context.Context, d *domaindoc.Document) error 
 	return insertOne(ctx, r.col, d)
 }
 
-func (r *DocumentRepo) List(ctx context.Context, orgID string, page, limit int, category, entityType, entityID string) ([]domaindoc.Document, int64, error) {
+func (r *DocumentRepo) List(ctx context.Context, orgID string, page, limit int, category, entityType, entityID string, omitFileData bool) ([]domaindoc.Document, int64, error) {
 	f := bson.M{}
 	if category != "" {
 		f["category"] = category
@@ -533,7 +601,11 @@ func (r *DocumentRepo) List(ctx context.Context, orgID string, page, limit int, 
 	if entityID != "" {
 		f["entity_id"] = entityID
 	}
-	return listByOrg[domaindoc.Document](ctx, r.col, orgID, ListParams{Page: page, Limit: limit, Filter: f})
+	params := ListParams{Page: page, Limit: limit, Filter: f}
+	if omitFileData {
+		params.Projection = bson.M{"file_data": 0}
+	}
+	return listByOrg[domaindoc.Document](ctx, r.col, orgID, params)
 }
 
 func (r *DocumentRepo) FindByID(ctx context.Context, orgID, id string) (*domaindoc.Document, error) {
@@ -659,10 +731,11 @@ func (r *NotificationRepo) List(ctx context.Context, orgID string, page, limit i
 		if filter.ToDate != nil {
 			dateQuery["$lte"] = *filter.ToDate
 		}
-		f["scheduled_at"] = dateQuery
+		// Historial: filter by when the notification was created (not only scheduled_at).
+		f["created_at"] = dateQuery
 	}
 	return listByOrg[domainnotif.Notification](ctx, r.col, orgID, ListParams{
-		Page: page, Limit: limit, Filter: f, Sort: bson.D{{Key: "scheduled_at", Value: -1}},
+		Page: page, Limit: limit, Filter: f, Sort: bson.D{{Key: "created_at", Value: -1}},
 	})
 }
 
@@ -683,4 +756,32 @@ func (r *NotificationRepo) Update(ctx context.Context, n *domainnotif.Notificati
 func (r *NotificationRepo) Delete(ctx context.Context, orgID, id string) error {
 	_, err := r.col.DeleteOne(ctx, bson.M{"_id": id, "organization_id": orgID})
 	return err
+}
+
+func (r *NotificationRepo) ExistsForPaymentTrigger(ctx context.Context, orgID, paymentID string, notifType domainnotif.Type, triggerDay string) (bool, error) {
+	count, err := r.col.CountDocuments(ctx, bson.M{
+		"organization_id":       orgID,
+		"type":                  notifType,
+		"metadata.payment_id":   paymentID,
+		"metadata.trigger_day":  triggerDay,
+		"status":                bson.M{"$in": []domainnotif.Status{domainnotif.StatusPending, domainnotif.StatusSent}},
+	})
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (r *NotificationRepo) ExistsForMaintenanceTrigger(ctx context.Context, orgID, maintenanceID string, notifType domainnotif.Type, triggerDay string) (bool, error) {
+	count, err := r.col.CountDocuments(ctx, bson.M{
+		"organization_id":            orgID,
+		"type":                       notifType,
+		"metadata.maintenance_id":    maintenanceID,
+		"metadata.trigger_day":       triggerDay,
+		"status":                     bson.M{"$in": []domainnotif.Status{domainnotif.StatusPending, domainnotif.StatusSent}},
+	})
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }

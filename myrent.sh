@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 #
 # MyRent Go — menú interactivo para desarrollo local (principal + submenús)
-# Uso: ./myrent.sh  |  Atajos CLI: ./myrent.sh git-status, start, quickstart, …
+# Uso: ./myrent.sh  |  Atajos CLI: ./myrent.sh git-status, start, quickstart, docker-up, …
+#
+# Docker (dev): docker-build-all, docker-build-api, docker-build-frontend,
+#   docker-up, docker-up-api, docker-up-frontend, docker-down, docker-restart,
+#   docker-logs, docker-logs-api, docker-logs-frontend, docker-up-prod
 #
 
 set -euo pipefail
@@ -13,12 +17,24 @@ LOG_DIR="${RUN_DIR}/logs"
 API_PORT="${MYRENT_API_PORT:-7070}"
 FRONTEND_PORT="${MYRENT_FRONTEND_PORT:-4000}"
 MONGO_PORT="${MYRENT_MONGO_PORT:-27017}"
+MAIL_SMTP_PORT="${MYRENT_MAIL_SMTP_PORT:-1025}"
+MAIL_UI_PORT="${MYRENT_MAIL_UI_PORT:-8025}"
+MAILCOW_DIR="${ROOT_DIR}/mailcow"
+MAILCOW_HOSTNAME="${MYRENT_MAILCOW_HOSTNAME:-mail.meincart.com}"
 
 API_PID_FILE="${RUN_DIR}/api.pid"
 FRONTEND_PID_FILE="${RUN_DIR}/frontend.pid"
 API_LOG="${LOG_DIR}/api.log"
 FRONTEND_LOG="${LOG_DIR}/frontend.log"
 MONGO_LOG="${LOG_DIR}/mongodb.log"
+MAIL_LOG="${LOG_DIR}/mailpit.log"
+MAILCOW_LOG="${LOG_DIR}/mailcow.log"
+
+DOCKER_COMPOSE_DEV="${ROOT_DIR}/docker-compose.yml"
+DOCKER_COMPOSE_PROD="${ROOT_DIR}/docker-compose.prod.yml"
+DOCKER_IMAGE_API="myrent-api"
+DOCKER_IMAGE_FRONTEND="myrent-frontend"
+DOCKER_FRONTEND_PORT="${MYRENT_DOCKER_FRONTEND_PORT:-3000}"
 
 ADMIN_USER="admin"
 ADMIN_PASS="admin123"
@@ -116,6 +132,16 @@ open_browser() {
 
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 
+load_dotenv() {
+  local env_file="${ROOT_DIR}/.env"
+  if [[ -f "$env_file" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+  fi
+}
+
 # ─── MongoDB ──────────────────────────────────────────────────────────────────
 
 mongo_available() {
@@ -182,6 +208,354 @@ mongo_logs() {
     warn "MongoDB no está corriendo"
     [[ -f "$MONGO_LOG" ]] && tail -50 "$MONGO_LOG"
   fi
+}
+
+# ─── Mailpit (opcional — solo desarrollo sin SMTP real) ───────────────────────
+
+mailpit_available() {
+  port_in_use "$MAIL_SMTP_PORT"
+}
+
+mailpit_start() {
+  if mailpit_available; then
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^myrent-mailpit$'; then
+      info "Mailpit (Docker) ya está corriendo → http://localhost:${MAIL_UI_PORT}"
+    else
+      info "SMTP detectado en puerto ${MAIL_SMTP_PORT}"
+    fi
+    return 0
+  fi
+
+  if ! command -v docker &>/dev/null; then
+    warn "Mailpit no disponible: Docker no está instalado."
+    echo "  Para correo real configura SMTP en .env (ver .env.example)."
+    return 0
+  fi
+
+  if ! docker info &>/dev/null; then
+    warn "Mailpit no disponible: Docker no está corriendo."
+    return 0
+  fi
+
+  info "Iniciando Mailpit con Docker..."
+  if ! docker compose -f "${ROOT_DIR}/docker-compose.mail.yml" up -d >>"$MAIL_LOG" 2>&1; then
+    error "No se pudo levantar Mailpit."
+    tail -10 "$MAIL_LOG" 2>/dev/null | sed 's/^/    /'
+    return 1
+  fi
+
+  if wait_for_port "$MAIL_SMTP_PORT" 30; then
+    info "Mailpit listo — bandeja: http://localhost:${MAIL_UI_PORT}  SMTP: localhost:${MAIL_SMTP_PORT}"
+  else
+    error "Mailpit no respondió a tiempo. Ver logs: $MAIL_LOG"
+    tail -10 "$MAIL_LOG" 2>/dev/null | sed 's/^/    /'
+    return 1
+  fi
+}
+
+mailpit_stop() {
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^myrent-mailpit$'; then
+    info "Deteniendo Mailpit..."
+    docker compose -f "${ROOT_DIR}/docker-compose.mail.yml" stop >>"$MAIL_LOG" 2>&1
+    info "Mailpit detenido"
+  else
+    warn "Mailpit no está corriendo"
+  fi
+}
+
+mailpit_open() {
+  open_browser "http://localhost:${MAIL_UI_PORT}"
+}
+
+mailpit_logs() {
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^myrent-mailpit$'; then
+    docker logs -f --tail 100 myrent-mailpit
+  else
+    warn "Mailpit no está corriendo"
+    [[ -f "$MAIL_LOG" ]] && tail -50 "$MAIL_LOG"
+  fi
+}
+
+# ─── Mailcow (producción — VPS dedicado, no combinar con stack dev) ───────────
+
+mailcow_installed() {
+  [[ -f "${MAILCOW_DIR}/mailcow.conf" && -f "${MAILCOW_DIR}/docker-compose.yml" ]]
+}
+
+mailcow_running() {
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -qE 'mailcow|postfix-mailcow|nginx-mailcow'
+}
+
+mailcow_setup() {
+  if [[ ! -x "${ROOT_DIR}/scripts/setup-mailcow.sh" ]]; then
+    error "No se encontró scripts/setup-mailcow.sh"
+    return 1
+  fi
+  MAILCOW_HOSTNAME="$MAILCOW_HOSTNAME" "${ROOT_DIR}/scripts/setup-mailcow.sh"
+}
+
+mailcow_start() {
+  if ! mailcow_installed; then
+    warn "Mailcow no está instalado. Ejecuta primero: ./myrent.sh mailcow-setup"
+    echo "  Documentación: docs/Cloudflare/mailcow.md"
+    return 1
+  fi
+
+  if ! command -v docker &>/dev/null || ! docker info &>/dev/null; then
+    error "Docker no está disponible."
+    return 1
+  fi
+
+  if mailcow_running; then
+    info "Mailcow ya está corriendo → https://${MAILCOW_HOSTNAME}/admin"
+    return 0
+  fi
+
+  info "Iniciando Mailcow (puede tardar varios minutos)..."
+  if ! (cd "$MAILCOW_DIR" && docker compose pull >>"$MAILCOW_LOG" 2>&1 && docker compose up -d >>"$MAILCOW_LOG" 2>&1); then
+    error "No se pudo levantar Mailcow."
+    tail -15 "$MAILCOW_LOG" 2>/dev/null | sed 's/^/    /'
+    return 1
+  fi
+
+  info "Mailcow iniciado — panel: https://${MAILCOW_HOSTNAME}/admin"
+  echo "  SMTP submission para MyRent Go: ${MAILCOW_HOSTNAME}:587"
+}
+
+mailcow_stop() {
+  if ! mailcow_installed; then
+    warn "Mailcow no está instalado en mailcow/"
+    return 1
+  fi
+
+  if ! mailcow_running; then
+    warn "Mailcow no parece estar corriendo"
+    return 0
+  fi
+
+  info "Deteniendo Mailcow..."
+  (cd "$MAILCOW_DIR" && docker compose down >>"$MAILCOW_LOG" 2>&1)
+  info "Mailcow detenido"
+}
+
+mailcow_status() {
+  header
+  echo "  Mailcow (${MAILCOW_HOSTNAME}):"
+  echo ""
+
+  if mailcow_installed; then
+    echo -e "  Instalación: ${GREEN}mailcow/ presente${NC}"
+  else
+    echo -e "  Instalación: ${RED}no instalado${NC} — ./myrent.sh mailcow-setup"
+    pause
+    return
+  fi
+
+  if mailcow_running; then
+    echo -e "  Estado:      ${GREEN}corriendo${NC}"
+    echo "  Panel:       https://${MAILCOW_HOSTNAME}/admin"
+    echo "  SMTP:        ${MAILCOW_HOSTNAME}:587 (submission)"
+  else
+    echo -e "  Estado:      ${YELLOW}detenido${NC}"
+  fi
+
+  echo ""
+  echo "  Puertos Mailcow: 25, 80, 443, 587, 465 (+ IMAP/POP)"
+  echo "  MyRent Go dev:   7070, 3000/4000, 27017 — evitar mismo host que Mailcow"
+  echo "  Docs:            docs/Cloudflare/mailcow.md"
+  echo "  Logs:            $MAILCOW_LOG"
+  pause
+}
+
+mailcow_open() {
+  open_browser "https://${MAILCOW_HOSTNAME}/admin"
+}
+
+mailcow_logs() {
+  if mailcow_running; then
+    (cd "$MAILCOW_DIR" && docker compose logs -f --tail 100)
+  else
+    warn "Mailcow no está corriendo"
+    [[ -f "$MAILCOW_LOG" ]] && tail -50 "$MAILCOW_LOG"
+  fi
+}
+
+# ─── Docker (stack en contenedores) ───────────────────────────────────────────
+
+docker_require() {
+  require_cmd docker || return 1
+  if ! docker info &>/dev/null; then
+    error "Docker no está corriendo."
+    echo ""
+    echo "  Inicia Docker Desktop y vuelve a intentar."
+    return 1
+  fi
+}
+
+docker_compose_env_args() {
+  if [[ -f "${ROOT_DIR}/.env" ]]; then
+    echo --env-file "${ROOT_DIR}/.env"
+  fi
+}
+
+docker_compose_dev() {
+  load_dotenv
+  local env_args
+  env_args=$(docker_compose_env_args)
+  # shellcheck disable=SC2086
+  docker compose -f "$DOCKER_COMPOSE_DEV" $env_args "$@"
+}
+
+docker_compose_prod() {
+  load_dotenv
+  if [[ ! -f "${ROOT_DIR}/.env" ]]; then
+    warn "No se encontró .env — producción requiere JWT_SECRET, CORS_ORIGINS, FRONTEND_URL, etc."
+  fi
+  local env_args
+  env_args=$(docker_compose_env_args)
+  # shellcheck disable=SC2086
+  docker compose -f "$DOCKER_COMPOSE_PROD" $env_args "$@"
+}
+
+docker_build_api() {
+  docker_require || return 1
+  info "Construyendo imagen API (${DOCKER_IMAGE_API})..."
+  docker build -t "$DOCKER_IMAGE_API" "${ROOT_DIR}/backend"
+  info "Imagen lista: ${DOCKER_IMAGE_API}"
+}
+
+docker_build_frontend() {
+  docker_require || return 1
+  info "Construyendo imagen Frontend (${DOCKER_IMAGE_FRONTEND})..."
+  docker build -t "$DOCKER_IMAGE_FRONTEND" "${ROOT_DIR}/frontend"
+  info "Imagen lista: ${DOCKER_IMAGE_FRONTEND}"
+}
+
+docker_build_all() {
+  docker_build_api && docker_build_frontend
+}
+
+docker_up() {
+  docker_require || return 1
+  info "Levantando stack completo (MongoDB + API + Frontend)..."
+  docker_compose_dev up -d --build || return 1
+  info "Stack Docker listo"
+  echo "  API:      http://localhost:${API_PORT}"
+  echo "  Frontend: http://localhost:${DOCKER_FRONTEND_PORT}"
+  [[ "${SKIP_PAUSE:-}" != "1" ]] && pause
+}
+
+docker_up_api() {
+  docker_require || return 1
+  info "Levantando MongoDB + API..."
+  docker_compose_dev up -d --build mongodb api || return 1
+  if wait_for_http "http://localhost:${API_PORT}/health" 60; then
+    info "API lista → http://localhost:${API_PORT}/health"
+  else
+    warn "API aún no responde. Ver: ./myrent.sh docker-logs-api"
+  fi
+  [[ "${SKIP_PAUSE:-}" != "1" ]] && pause
+}
+
+docker_up_frontend() {
+  docker_require || return 1
+  info "Levantando Frontend (+ API y MongoDB)..."
+  docker_compose_dev up -d --build frontend || return 1
+  info "Frontend listo → http://localhost:${DOCKER_FRONTEND_PORT}"
+  [[ "${SKIP_PAUSE:-}" != "1" ]] && pause
+}
+
+docker_down() {
+  docker_require || return 1
+  info "Deteniendo stack Docker (dev)..."
+  docker_compose_dev down
+  info "Stack detenido"
+  [[ "${SKIP_PAUSE:-}" != "1" ]] && pause
+}
+
+docker_restart() {
+  docker_require || return 1
+  info "Reconstruyendo y reiniciando API + Frontend..."
+  docker_compose_dev up -d --build --force-recreate api frontend || return 1
+  info "API y Frontend reiniciados"
+  echo "  API:      http://localhost:${API_PORT}"
+  echo "  Frontend: http://localhost:${DOCKER_FRONTEND_PORT}"
+  [[ "${SKIP_PAUSE:-}" != "1" ]] && pause
+}
+
+docker_logs() {
+  docker_require || return 1
+  docker_compose_dev logs -f --tail 100
+}
+
+docker_logs_api() {
+  docker_require || return 1
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^myrent-api$'; then
+    docker logs -f --tail 100 myrent-api
+  else
+    warn "Contenedor myrent-api no está corriendo"
+    docker_compose_dev logs --tail 50 api 2>/dev/null || true
+  fi
+}
+
+docker_logs_frontend() {
+  docker_require || return 1
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^myrent-frontend$'; then
+    docker logs -f --tail 100 myrent-frontend
+  else
+    warn "Contenedor myrent-frontend no está corriendo"
+    docker_compose_dev logs --tail 50 frontend 2>/dev/null || true
+  fi
+}
+
+docker_up_prod() {
+  docker_require || return 1
+  if [[ "${1:-}" != "--yes" ]]; then
+    header
+    echo "  Levantando stack de producción..."
+    echo ""
+    warn "Usa docker-compose.prod.yml — requiere .env con JWT_SECRET, CORS_ORIGINS, FRONTEND_URL"
+    echo ""
+    read -r -p "  ¿Continuar? [s/N]: " confirm
+    if [[ ! "$confirm" =~ ^[Ss]$ ]]; then
+      warn "Cancelado"
+      pause
+      return 0
+    fi
+  fi
+  docker_compose_prod up -d --build || return 1
+  info "Stack de producción levantado"
+  [[ "${SKIP_PAUSE:-}" != "1" ]] && pause
+}
+
+do_docker_logs_menu() {
+  while true; do
+    header
+    echo "  Logs Docker (Ctrl+C para salir del tail):"
+    echo ""
+    echo "    1) Todos los servicios (compose)"
+    echo "    2) API"
+    echo "    3) Frontend"
+    echo "    4) MongoDB"
+    echo "    0) Volver"
+    echo ""
+    read -r -p "  Opción: " log_opt
+
+    case "$log_opt" in
+      1) docker_logs ;;
+      2) docker_logs_api ;;
+      3) docker_logs_frontend ;;
+      4)
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^myrent-mongodb$'; then
+          docker logs -f --tail 100 myrent-mongodb
+        else
+          warn "Contenedor myrent-mongodb no está corriendo"
+        fi
+        ;;
+      0) return ;;
+      *) warn "Opción inválida"; sleep 1 ;;
+    esac
+  done
 }
 
 # ─── Instalar / Build ─────────────────────────────────────────────────────────
@@ -293,14 +667,15 @@ api_start() {
   fi
 
   (
-    export APP_ENV=development
-    export APP_PORT="$API_PORT"
-    export MONGODB_URI="mongodb://localhost:${MONGO_PORT}"
-    export MONGODB_DATABASE=myrent
-    export JWT_SECRET=dev-secret-change-in-production-min-32-chars
-    export JWT_ACCESS_TTL=24h
-    export CORS_ORIGINS="http://localhost:${FRONTEND_PORT},http://localhost:5173"
-    export FRONTEND_URL="$APP_URL"
+    load_dotenv
+    export APP_ENV="${APP_ENV:-development}"
+    export APP_PORT="${APP_PORT:-$API_PORT}"
+    export MONGODB_URI="${MONGODB_URI:-mongodb://localhost:${MONGO_PORT}}"
+    export MONGODB_DATABASE="${MONGODB_DATABASE:-myrent}"
+    export JWT_SECRET="${JWT_SECRET:-dev-secret-change-in-production-min-32-chars}"
+    export JWT_ACCESS_TTL="${JWT_ACCESS_TTL:-24h}"
+    export CORS_ORIGINS="${CORS_ORIGINS:-http://localhost:${FRONTEND_PORT},http://localhost:5173}"
+    export FRONTEND_URL="${FRONTEND_URL:-$APP_URL}"
     nohup "${ROOT_DIR}/bin/api" >>"$API_LOG" 2>&1 &
     echo $! >"$API_PID_FILE"
   )
@@ -467,6 +842,29 @@ do_status() {
     echo -e "  MongoDB:   ${RED}detenido${NC}"
   fi
 
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^myrent-mailpit$'; then
+    echo -e "  Mailpit:   ${YELLOW}opcional (dev)${NC} — corriendo (UI http://localhost:${MAIL_UI_PORT})"
+  elif mailpit_available; then
+    echo -e "  Mailpit:   ${YELLOW}puerto ${MAIL_SMTP_PORT} en uso (sin contenedor myrent-mailpit)${NC}"
+  fi
+
+  if mailcow_installed; then
+    if mailcow_running; then
+      echo -e "  Mailcow:   ${GREEN}corriendo${NC} (https://${MAILCOW_HOSTNAME}/admin)"
+    else
+      echo -e "  Mailcow:   ${YELLOW}instalado, detenido${NC} (mailcow/)"
+    fi
+  fi
+
+  load_dotenv
+  if [[ -n "${SMTP_HOST:-}" && -n "${SMTP_USER:-}" && -n "${SMTP_PASSWORD:-}" && -n "${SMTP_FROM:-${FROM_EMAIL:-}}" ]]; then
+    echo -e "  SMTP:      ${GREEN}configurado${NC} (${SMTP_HOST}:${SMTP_PORT:-587}, ${SMTP_FROM:-${FROM_EMAIL:-—}})"
+  elif [[ -n "${SMTP_HOST:-}" ]]; then
+    echo -e "  SMTP:      ${YELLOW}incompleto${NC} — faltan credenciales o SMTP_FROM en .env"
+  else
+    echo -e "  SMTP:      ${RED}no configurado${NC} — completa .env para envío real (ver .env.example)"
+  fi
+
   if is_running "$API_PID_FILE"; then
     echo -e "  API:       ${GREEN}corriendo${NC} (PID $(cat "$API_PID_FILE"), puerto ${API_PORT})"
   elif port_in_use "$API_PORT"; then
@@ -493,6 +891,7 @@ do_status() {
   echo "    API:      $API_LOG"
   echo "    Frontend: $FRONTEND_LOG"
   echo "    MongoDB:  $MONGO_LOG"
+  echo "    Mailpit:  $MAIL_LOG"
   pause
 }
 
@@ -504,7 +903,8 @@ do_logs_menu() {
     echo "    1) API"
     echo "    2) Frontend"
     echo "    3) MongoDB (docker)"
-    echo "    4) Todos (multiplexado)"
+    echo "    4) Mailpit (opcional, solo dev)"
+    echo "    5) Todos (multiplexado)"
     echo "    0) Volver"
     echo ""
     read -r -p "  Opción: " log_opt
@@ -520,6 +920,9 @@ do_logs_menu() {
         mongo_logs
         ;;
       4)
+        mailpit_logs
+        ;;
+      5)
         if require_cmd multitail 2>/dev/null; then
           multitail "$API_LOG" "$FRONTEND_LOG"
         else
@@ -756,6 +1159,7 @@ show_main_menu() {
   echo "    2)  Base de datos y servicios"
   echo "    3)  Git / GitHub"
   echo "    4)  Utilidades"
+  echo "    5)  Docker (imágenes y contenedores)"
   echo ""
   echo "    0)  Salir"
   echo ""
@@ -800,6 +1204,11 @@ menu_base_datos() {
     echo "    2)  Solo MongoDB"
     echo "    3)  Solo API"
     echo "    4)  Solo Frontend"
+    echo "    5)  Mailpit (opcional — captura local, no envía correos reales)"
+    echo "    6)  Abrir bandeja Mailpit (http://localhost:${MAIL_UI_PORT})"
+    echo "    7)  Mailcow — instalar (VPS / mail.meincart.com)"
+    echo "    8)  Mailcow — iniciar / detener"
+    echo "    9)  Mailcow — estado y panel admin"
     echo ""
     echo "    0)  Volver al menú principal"
     echo ""
@@ -811,6 +1220,28 @@ menu_base_datos() {
       2) mongo_start; [[ $? -ne 0 ]] && pause || pause ;;
       3) api_start; [[ $? -ne 0 ]] && pause || pause ;;
       4) frontend_start; [[ $? -ne 0 ]] && pause || pause ;;
+      5) mailpit_start; [[ $? -ne 0 ]] && pause || pause ;;
+      6) mailpit_open; pause ;;
+      7) mailcow_setup; pause ;;
+      8)
+        echo "    a) Iniciar  b) Detener"
+        read -r -p "  Sub-opción [a/b]: " sub
+        case "$sub" in
+          a|A) mailcow_start; [[ $? -ne 0 ]] && pause || pause ;;
+          b|B) mailcow_stop; pause ;;
+          *) warn "Opción inválida"; sleep 1 ;;
+        esac
+        ;;
+      9)
+        echo "    a) Estado  b) Abrir panel  c) Logs"
+        read -r -p "  Sub-opción [a/b/c]: " sub
+        case "$sub" in
+          a|A) mailcow_status ;;
+          b|B) mailcow_open; pause ;;
+          c|C) mailcow_logs ;;
+          *) warn "Opción inválida"; sleep 1 ;;
+        esac
+        ;;
       0) return ;;
       *) warn "Opción inválida"; sleep 1 ;;
     esac
@@ -841,6 +1272,44 @@ menu_git() {
       4) do_git_pull ;;
       5) do_git_remote_info ;;
       6) do_git_create_branch ;;
+      0) return ;;
+      *) warn "Opción inválida"; sleep 1 ;;
+    esac
+  done
+}
+
+menu_docker() {
+  while true; do
+    header
+    echo -e "  ${BOLD}Docker${NC}"
+    echo ""
+    echo "    1)  Build imagen API"
+    echo "    2)  Build imagen Frontend"
+    echo "    3)  Build ambas imágenes"
+    echo "    4)  Levantar stack completo (dev)"
+    echo "    5)  Levantar solo API (+ MongoDB)"
+    echo "    6)  Levantar solo Frontend (+ dependencias)"
+    echo "    7)  Detener stack (dev)"
+    echo "    8)  Reiniciar API y Frontend (rebuild)"
+    echo "    9)  Ver logs"
+    echo "    10) Producción (docker-compose.prod.yml)"
+    echo ""
+    echo "    0)  Volver al menú principal"
+    echo ""
+    read -r -p "  Opción: " opt
+    echo ""
+
+    case "$opt" in
+      1) docker_build_api; [[ $? -ne 0 ]] && pause || pause ;;
+      2) docker_build_frontend; [[ $? -ne 0 ]] && pause || pause ;;
+      3) docker_build_all; [[ $? -ne 0 ]] && pause || pause ;;
+      4) docker_up; [[ $? -ne 0 ]] && pause ;;
+      5) docker_up_api; [[ $? -ne 0 ]] && pause ;;
+      6) docker_up_frontend; [[ $? -ne 0 ]] && pause ;;
+      7) docker_down ;;
+      8) docker_restart; [[ $? -ne 0 ]] && pause ;;
+      9) do_docker_logs_menu ;;
+      10) docker_up_prod; [[ $? -ne 0 ]] && pause ;;
       0) return ;;
       *) warn "Opción inválida"; sleep 1 ;;
     esac
@@ -885,6 +1354,7 @@ main_menu() {
       2) menu_base_datos ;;
       3) menu_git ;;
       4) menu_utilidades ;;
+      5) menu_docker ;;
       0)
         echo "  Hasta pronto."
         exit 0
@@ -914,12 +1384,35 @@ if [[ "${1:-}" != "" ]]; then
     quickstart) SKIP_PAUSE=1 do_quickstart ;;
     api)        SKIP_PAUSE=1 api_start ;;
     frontend)   SKIP_PAUSE=1 frontend_start ;;
+    mail|mailpit) SKIP_PAUSE=1 mailpit_start ;;
+    mail-open)  mailpit_open ;;
+    mailcow-setup) mailcow_setup ;;
+    mailcow-start) SKIP_PAUSE=1 mailcow_start ;;
+    mailcow-stop) mailcow_stop ;;
+    mailcow-status) mailcow_status ;;
+    mailcow-open) mailcow_open ;;
     git-status) do_git_status ;;
     git-commit) do_git_commit ;;
     git-push)   do_git_push ;;
     git-pull)   do_git_pull ;;
+    docker-build|docker-build-all) SKIP_PAUSE=1 docker_build_all ;;
+    docker-build-api)   SKIP_PAUSE=1 docker_build_api ;;
+    docker-build-frontend) SKIP_PAUSE=1 docker_build_frontend ;;
+    docker-up)          SKIP_PAUSE=1 docker_up ;;
+    docker-up-api)      SKIP_PAUSE=1 docker_up_api ;;
+    docker-up-frontend) SKIP_PAUSE=1 docker_up_frontend ;;
+    docker-down)        SKIP_PAUSE=1 docker_down ;;
+    docker-restart)     SKIP_PAUSE=1 docker_restart ;;
+    docker-logs)        docker_logs ;;
+    docker-logs-api)    docker_logs_api ;;
+    docker-logs-frontend) docker_logs_frontend ;;
+    docker-up-prod)     SKIP_PAUSE=1 docker_up_prod --yes ;;
     *)
-      echo "Uso: $0 [install|build|bootstrap|start|stop|restart|status|logs|open|test|quickstart|api|frontend|git-status|git-commit|git-push|git-pull]"
+      echo "Uso: $0 [install|build|bootstrap|start|stop|restart|status|logs|open|test|quickstart|"
+      echo "         api|frontend|mail|mail-open|mailcow-setup|mailcow-start|mailcow-stop|mailcow-status|mailcow-open|"
+      echo "         git-status|git-commit|git-push|git-pull|"
+      echo "         docker-build-all|docker-build-api|docker-build-frontend|docker-up|docker-up-api|docker-up-frontend|"
+      echo "         docker-down|docker-restart|docker-logs|docker-logs-api|docker-logs-frontend|docker-up-prod]"
       exit 1
       ;;
   esac

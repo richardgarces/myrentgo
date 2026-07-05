@@ -13,10 +13,12 @@ services:
 
   api:
     build:
-      context: .
-      dockerfile: docker/Dockerfile.api
+      context: ./backend
+      dockerfile: Dockerfile
     restart: always
     environment:
+      # Required: JWT_SECRET, CORS_ORIGINS, FRONTEND_URL (set in .env)
+      # Email: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM
       APP_ENV: production
       MONGODB_URI: mongodb://mongodb:27017
       MONGODB_DATABASE: myrent
@@ -25,6 +27,12 @@ services:
       FRONTEND_URL: ${FRONTEND_URL}
       MFA_ENABLED: "true"
       RATE_LIMIT_RPS: "20"
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-MyRent Go}
     depends_on:
       - mongodb
     volumes:
@@ -37,8 +45,8 @@ services:
 
   frontend:
     build:
-      context: .
-      dockerfile: docker/Dockerfile.frontend
+      context: ./frontend
+      dockerfile: Dockerfile
     restart: always
     ports:
       - "80:80"

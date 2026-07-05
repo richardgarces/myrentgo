@@ -85,6 +85,25 @@ func (r *OrgRepo) CreateForUser(ctx context.Context, userID, name string) (strin
 	return org.ID, nil
 }
 
+func (r *OrgRepo) ListActiveIDs(ctx context.Context) ([]string, error) {
+	cursor, err := r.col.Find(ctx, bson.M{"active": true}, options.Find().SetProjection(bson.M{"_id": 1}))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var docs []struct {
+		ID string `bson:"_id"`
+	}
+	if err := cursor.All(ctx, &docs); err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(docs))
+	for i, d := range docs {
+		ids[i] = d.ID
+	}
+	return ids, nil
+}
+
 type PropertyRepo struct {
 	col *mongo.Collection
 }

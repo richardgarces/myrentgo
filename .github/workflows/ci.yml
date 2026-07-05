@@ -56,6 +56,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build API image
-        run: docker build -f docker/Dockerfile.api -t myrent-api:${{ github.sha }} .
+        run: docker build -t myrent-api:${{ github.sha }} ./backend
       - name: Build Frontend image
-        run: docker build -f docker/Dockerfile.frontend -t myrent-frontend:${{ github.sha }} .
+        run: docker build -t myrent-frontend:${{ github.sha }} ./frontend

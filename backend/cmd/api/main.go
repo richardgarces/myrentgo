@@ -78,12 +78,29 @@ func main() {
 		FromName: cfg.Notify.SMTPFromName,
 	})
 	emailRecipientRepo := mongodb.NewEmailRecipientRepo(mongo)
-	emailNotifySvc := emailnotify.NewService(emailClient, emailRecipientRepo, mongodb.NewNotificationRepo(mongo))
+	notificationRepo := mongodb.NewNotificationRepo(mongo)
+	emailNotifySvc := emailnotify.NewService(
+		emailClient,
+		emailRecipientRepo,
+		notificationRepo,
+		mongodb.NewNotificationSettingsRepo(mongo),
+		mongodb.NewPaymentRepo(mongo),
+		mongodb.NewMaintenanceRepo(mongo),
+		mongodb.NewTenantRepo(mongo),
+		mongodb.NewPropertyRepo(mongo),
+	)
 	emailNotifyHandler := handlers.NewEmailNotificationsHandler(emailNotifySvc, emailRecipientRepo)
+
+	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
+	defer schedulerCancel()
+	if cfg.Notify.SchedulerEnabled {
+		emailnotify.StartBackgroundScheduler(schedulerCtx, emailNotifySvc, orgRepo, cfg.Notify.SchedulerInterval)
+		slog.Info("email scheduler enabled", "interval", cfg.Notify.SchedulerInterval.String())
+	}
 
 	router := httpx.NewRouter(httpx.Deps{
 		Config:      cfg,
-		Auth:        handlers.NewAuthHandler(authService),
+		Auth:        handlers.NewAuthHandler(authService, orgRepo),
 		Property:    handlers.NewPropertyHandler(propHandler),
 		Dashboard:   handlers.NewDashboardHandler(dashHandler),
 		Indicators:  handlers.NewIndicatorsHandler(ufProvider),

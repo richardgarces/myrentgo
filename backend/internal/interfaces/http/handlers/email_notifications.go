@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/richard/my-rent-go/internal/application/emailnotify"
 	domainer "github.com/richard/my-rent-go/internal/domain/emailrecipient"
+	domainsettings "github.com/richard/my-rent-go/internal/domain/notificationsettings"
 	"github.com/richard/my-rent-go/internal/infrastructure/mongodb"
 	"github.com/richard/my-rent-go/internal/interfaces/http/middleware"
 )
@@ -212,14 +213,100 @@ func (e *invalidTypeError) Error() string {
 func (h *EmailNotificationsHandler) ListNotificationTypes(c *gin.Context) {
 	types := make([]gin.H, 0, len(domainer.AllNotificationTypes))
 	labels := map[domainer.NotificationType]string{
-		domainer.TypePaymentDue:     "Aviso de pago",
-		domainer.TypePaymentOverdue: "Pago atrasado",
-		domainer.TypeLateInterest:   "Intereses por mora",
-		domainer.TypeDividendDue:    "Dividendo por vencer",
-		domainer.TypeLeaseExpiring:  "Arriendo por vencer",
+		domainer.TypePaymentDue:      "Recordatorio de pago (3 días antes)",
+		domainer.TypePaymentOverdue:  "Pago vencido (día siguiente)",
+		domainer.TypeLateInterest:    "Multas por mora (5 días después)",
+		domainer.TypeDividendDue:     "Dividendo por vencer",
+		domainer.TypeLeaseExpiring:   "Arriendo por vencer",
+		domainer.TypeMaintenanceDue:  "Recordatorio de mantención",
 	}
 	for _, t := range domainer.AllNotificationTypes {
 		types = append(types, gin.H{"id": t, "label": labels[t]})
 	}
 	c.JSON(http.StatusOK, gin.H{"data": types})
+}
+
+func (h *EmailNotificationsHandler) GetAutomationSettings(c *gin.Context) {
+	orgID := middleware.GetOrgID(c)
+	settings, err := h.svc.GetAutomationSettings(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, settings)
+}
+
+type updateAutomationSettingsReq struct {
+	Rules []struct {
+		ID      string `json:"id" binding:"required"`
+		Enabled bool   `json:"enabled"`
+	} `json:"rules" binding:"required"`
+}
+
+func (h *EmailNotificationsHandler) UpdateAutomationSettings(c *gin.Context) {
+	var req updateAutomationSettingsReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	orgID := middleware.GetOrgID(c)
+	current, err := h.svc.GetAutomationSettings(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	updates := make([]domainsettings.AutomationRule, 0, len(req.Rules))
+	for _, r := range req.Rules {
+		existing := current.RuleByID(r.ID)
+		if existing == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unknown rule id: " + r.ID})
+			return
+		}
+		rule := *existing
+		rule.Enabled = r.Enabled
+		updates = append(updates, rule)
+	}
+	settings, err := h.svc.UpdateAutomationSettings(c.Request.Context(), orgID, updates)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, settings)
+}
+
+func (h *EmailNotificationsHandler) RunEmailScheduler(c *gin.Context) {
+	orgID := middleware.GetOrgID(c)
+	result, err := h.svc.RunScheduler(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "result": result})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "scheduler ejecutado", "result": result})
+}
+
+type notifyMaintenanceBulkReq struct {
+	MaintenanceIDs []string `json:"maintenance_ids"`
+}
+
+func (h *EmailNotificationsHandler) NotifyMaintenance(c *gin.Context) {
+	orgID := middleware.GetOrgID(c)
+	id := c.Param("id")
+	result, err := h.svc.SendMaintenanceNotification(c.Request.Context(), orgID, id)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "result": result})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "notificación de mantención enviada", "result": result})
+}
+
+func (h *EmailNotificationsHandler) NotifyMaintenanceBulk(c *gin.Context) {
+	var req notifyMaintenanceBulkReq
+	_ = c.ShouldBindJSON(&req)
+	orgID := middleware.GetOrgID(c)
+	result, err := h.svc.SendMaintenanceNotificationsBulk(c.Request.Context(), orgID, req.MaintenanceIDs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "result": result})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "notificaciones de mantención procesadas", "result": result})
 }

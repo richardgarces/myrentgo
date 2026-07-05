@@ -121,6 +121,15 @@ func (c *Client) EnsureIndexes(ctx context.Context) error {
 			{Keys: bson.D{{Key: "organization_id", Value: 1}, {Key: "type", Value: 1}}},
 			{Keys: bson.D{{Key: "organization_id", Value: 1}, {Key: "tenant_id", Value: 1}}},
 			{Keys: bson.D{{Key: "organization_id", Value: 1}, {Key: "scheduled_at", Value: -1}}},
+			{Keys: bson.D{
+				{Key: "organization_id", Value: 1},
+				{Key: "type", Value: 1},
+				{Key: "metadata.payment_id", Value: 1},
+				{Key: "metadata.trigger_day", Value: 1},
+			}},
+		},
+		"notification_settings": {
+			{Keys: bson.D{{Key: "organization_id", Value: 1}}, Options: options.Index().SetUnique(true)},
 		},
 		"email_recipients": {
 			{Keys: bson.D{{Key: "organization_id", Value: 1}}},

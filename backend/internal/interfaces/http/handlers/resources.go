@@ -1235,7 +1235,8 @@ func (h *ResourcesHandler) CreateTicket(c *gin.Context) {
 func (h *ResourcesHandler) ListDocuments(c *gin.Context) {
 	orgID := middleware.GetOrgID(c)
 	page, limit := parsePageLimit(c)
-	items, total, err := h.docs.List(c.Request.Context(), orgID, page, limit, c.Query("category"), c.Query("entity_type"), c.Query("entity_id"))
+	omitFileData := c.Query("omit_file_data") == "1" || c.Query("omit_file_data") == "true"
+	items, total, err := h.docs.List(c.Request.Context(), orgID, page, limit, c.Query("category"), c.Query("entity_type"), c.Query("entity_id"), omitFileData)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1664,7 +1665,7 @@ func parseDateRange(v string, inclusiveEnd bool) (*time.Time, error) {
 
 func isValidNotificationType(v string) bool {
 	switch domainnotif.Type(v) {
-	case domainnotif.TypePaymentDue, domainnotif.TypePaymentOverdue, domainnotif.TypeLateInterest:
+	case domainnotif.TypePaymentDue, domainnotif.TypePaymentOverdue, domainnotif.TypeLateInterest, domainnotif.TypeMaintenanceDue:
 		return true
 	default:
 		return false

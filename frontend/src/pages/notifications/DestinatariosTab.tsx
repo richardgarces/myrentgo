@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Mail, Plus, Send, Trash2 } from 'lucide-react'
+import { Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FormDialog, FormField } from '@/components/ui/form-dialog'
 import { Input } from '@/components/ui/input'
 import { PinConfirmDialog } from '@/components/ui/pin-confirm-dialog'
-import { EmptyState, LoadingSkeleton, PageHeader, StatusBadge } from '@/components/ui/page'
+import { EmptyState, LoadingSkeleton, StatusBadge } from '@/components/ui/page'
 import { api, type EmailRecipient } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
@@ -18,7 +18,7 @@ const defaultForm = {
   notification_types: [] as string[],
 }
 
-export function EmailNotificationsPage() {
+export function DestinatariosTab() {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<EmailRecipient | null>(null)
@@ -34,10 +34,6 @@ export function EmailNotificationsPage() {
   const { data: types } = useQuery({
     queryKey: ['email-notification-types'],
     queryFn: () => api.getEmailNotificationTypes(),
-  })
-  const { data: smtpStatus } = useQuery({
-    queryKey: ['smtp-status'],
-    queryFn: () => api.getSMTPStatus(),
   })
 
   const typeLabels = useMemo(
@@ -107,18 +103,8 @@ export function EmailNotificationsPage() {
     onSuccess: (res) => {
       setFeedback(res.message ?? 'Correo de prueba enviado')
       if (!res.configured) {
-        setFeedback('SMTP no configurado: el envío se registró en logs del servidor (modo desarrollo)')
+        setFeedback('SMTP no configurado: completa SMTP_HOST, SMTP_USER, SMTP_PASSWORD y SMTP_FROM en .env')
       }
-    },
-    onError: (err: Error) => setFeedback(err.message),
-  })
-
-  const sendPending = useMutation({
-    mutationFn: () => api.sendEmailNotifications(),
-    onSuccess: (res) => {
-      const sent = res.result?.sent_count ?? 0
-      setFeedback(`Se enviaron notificaciones a ${sent} destinatario(s)`)
-      qc.invalidateQueries({ queryKey: ['notifications'] })
     },
     onError: (err: Error) => setFeedback(err.message),
   })
@@ -136,43 +122,22 @@ export function EmailNotificationsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Notificaciones por correo"
-        count={data?.total}
-        action={
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => sendPending.mutate()} disabled={sendPending.isPending}>
-              <Send className="h-4 w-4" />
-              Enviar pendientes
-            </Button>
-            <Button onClick={openCreate}>
-              <Plus className="h-4 w-4" />
-              Agregar destinatario
-            </Button>
-          </div>
-        }
-      />
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button onClick={openCreate}>
+          <Plus className="h-4 w-4" />
+          Agregar destinatario
+        </Button>
+      </div>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Mail className="h-4 w-4" />
-            Estado SMTP
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm text-muted-foreground space-y-1">
-          <p>
-            {smtpStatus?.configured
-              ? 'SMTP configurado. Los correos se enviarán a los destinatarios habilitados.'
-              : 'SMTP no configurado. En desarrollo los envíos se registran en logs sin error.'}
-          </p>
-          {feedback && <p className="text-foreground pt-2">{feedback}</p>}
-        </CardContent>
-      </Card>
+      {feedback && (
+        <p className={`text-sm ${sendTest.isError ? 'text-destructive' : 'text-muted-foreground'}`}>
+          {feedback}
+        </p>
+      )}
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Destinatarios</CardTitle>
+          <CardTitle className="text-base">Destinatarios de correo</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           {!data?.data.length ? (

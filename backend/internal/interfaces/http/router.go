@@ -126,6 +126,8 @@ func NewRouter(deps Deps) *Router {
 			{
 				maint.GET("", deps.Resources.ListMaintenance)
 				maint.POST("", deps.AuthMW.RequireRole(writeRoles...), deps.Resources.CreateMaintenance)
+				maint.POST("/notify", deps.AuthMW.RequireRole(writeRoles...), deps.EmailNotify.NotifyMaintenanceBulk)
+				maint.POST("/:id/notify", deps.AuthMW.RequireRole(writeRoles...), deps.EmailNotify.NotifyMaintenance)
 			}
 
 			tickets := protected.Group("/tickets")
@@ -164,12 +166,15 @@ func NewRouter(deps Deps) *Router {
 				notifications.DELETE("/:id", deps.AuthMW.RequireRole(writeRoles...), deps.Resources.DeleteNotification)
 				notifications.POST("/email/test", deps.AuthMW.RequireRole(writeRoles...), deps.EmailNotify.SendTestEmail)
 				notifications.POST("/email/send", deps.AuthMW.RequireRole(writeRoles...), deps.EmailNotify.SendEmailNotifications)
+				notifications.POST("/email/run-scheduler", deps.AuthMW.RequireRole(writeRoles...), deps.EmailNotify.RunEmailScheduler)
 			}
 
 			emailRecipients := protected.Group("/email-recipients")
 			{
 				emailRecipients.GET("", deps.EmailNotify.ListRecipients)
 				emailRecipients.GET("/types", deps.EmailNotify.ListNotificationTypes)
+				emailRecipients.GET("/automation-settings", deps.EmailNotify.GetAutomationSettings)
+				emailRecipients.PATCH("/automation-settings", deps.AuthMW.RequireRole(writeRoles...), deps.EmailNotify.UpdateAutomationSettings)
 				emailRecipients.GET("/smtp-status", deps.EmailNotify.GetSMTPStatus)
 				emailRecipients.POST("", deps.AuthMW.RequireRole(writeRoles...), deps.EmailNotify.CreateRecipient)
 				emailRecipients.PATCH("/:id", deps.AuthMW.RequireRole(writeRoles...), deps.EmailNotify.UpdateRecipient)

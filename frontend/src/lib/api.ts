@@ -77,7 +77,15 @@ class ApiClient {
   }
 
   me() {
-    return this.request<Record<string, unknown>>('/auth/me')
+    return this.request<UserProfile>('/auth/me')
+  }
+
+  getHealth() {
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    return fetch(`${origin}/health`).then(async (res) => {
+      if (!res.ok) throw new Error('API no disponible')
+      return res.json() as Promise<{ status: string; service?: string }>
+    })
   }
 
   getDashboard() {
@@ -292,6 +300,17 @@ class ApiClient {
     return this.request<Maintenance>('/maintenance', { method: 'POST', body: JSON.stringify(data) })
   }
 
+  notifyMaintenance(id: string) {
+    return this.request<MaintenanceNotifyResponse>(`/maintenance/${id}/notify`, { method: 'POST', body: JSON.stringify({}) })
+  }
+
+  notifyMaintenanceBulk(maintenanceIds?: string[]) {
+    return this.request<MaintenanceNotifyResponse>('/maintenance/notify', {
+      method: 'POST',
+      body: JSON.stringify({ maintenance_ids: maintenanceIds ?? [] }),
+    })
+  }
+
   getTickets(page = 1, status?: string) {
     const q = new URLSearchParams({ page: String(page) })
     if (status) q.set('status', status)
@@ -302,11 +321,12 @@ class ApiClient {
     return this.request<Ticket>('/tickets', { method: 'POST', body: JSON.stringify(data) })
   }
 
-  getDocuments(page = 1, opts?: { category?: string; entity_type?: string; entity_id?: string }) {
+  getDocuments(page = 1, opts?: { category?: string; entity_type?: string; entity_id?: string; limit?: number }) {
     const q = new URLSearchParams({ page: String(page) })
     if (opts?.category) q.set('category', opts.category)
     if (opts?.entity_type) q.set('entity_type', opts.entity_type)
     if (opts?.entity_id) q.set('entity_id', opts.entity_id)
+    if (opts?.limit) q.set('limit', String(opts.limit))
     return this.request<Paginated<Document>>(`/documents?${q}`)
   }
 
@@ -455,6 +475,24 @@ class ApiClient {
     return this.request<EmailSendResponse>('/notifications/email/send', {
       method: 'POST',
       body: JSON.stringify(data ?? {}),
+    })
+  }
+
+  getEmailAutomationSettings() {
+    return this.request<EmailAutomationSettings>('/email-recipients/automation-settings')
+  }
+
+  updateEmailAutomationSettings(rules: Array<{ id: string; enabled: boolean }>) {
+    return this.request<EmailAutomationSettings>('/email-recipients/automation-settings', {
+      method: 'PATCH',
+      body: JSON.stringify({ rules }),
+    })
+  }
+
+  runEmailScheduler() {
+    return this.request<{ message: string; result: EmailSchedulerResult }>('/notifications/email/run-scheduler', {
+      method: 'POST',
+      body: JSON.stringify({}),
     })
   }
 }
@@ -716,6 +754,27 @@ export interface CrmContact {
   active: boolean
 }
 
+export interface UserOrg {
+  organization_id: string
+  role: string
+}
+
+export interface UserProfile {
+  id: string
+  email: string
+  first_name: string
+  last_name: string
+  phone?: string
+  avatar_url?: string
+  active: boolean
+  mfa_enabled: boolean
+  organizations: UserOrg[]
+  preferences?: { theme?: string; locale?: string }
+  current_org_id?: string
+  current_role?: string
+  current_org_name?: string
+}
+
 export interface Maintenance {
   id: string
   property_id: string
@@ -747,6 +806,8 @@ export interface Document {
   entity_id: string
   version: number
   active: boolean
+  created_at?: string
+  updated_at?: string
 }
 
 export interface CalendarEvent {
@@ -808,6 +869,57 @@ export interface EmailSendResponse {
     failed_count: number
     recipients?: string[]
     errors?: string[]
+  }
+  error?: string
+}
+
+export interface EmailAutomationRule {
+  id: string
+  type: string
+  label: string
+  days_offset: number
+  enabled: boolean
+}
+
+export interface EmailAutomationSettings {
+  id: string
+  organization_id: string
+  rules: EmailAutomationRule[]
+  last_run_at?: string
+  last_run_summary?: string
+}
+
+export interface EmailSchedulerDetail {
+  action: 'created' | 'sent' | 'skipped' | 'failed'
+  type: string
+  payment_id?: string
+  maintenance_id?: string
+  maintenance_title?: string
+  tenant_name?: string
+  property_name?: string
+  message?: string
+}
+
+export interface EmailSchedulerResult {
+  checked_payments: number
+  checked_maintenance: number
+  created: number
+  sent: number
+  skipped: number
+  failed: number
+  errors?: string[]
+  details?: EmailSchedulerDetail[]
+}
+
+export interface MaintenanceNotifyResponse {
+  message?: string
+  result?: {
+    created: number
+    sent: number
+    skipped: number
+    failed: number
+    errors?: string[]
+    details?: EmailSchedulerDetail[]
   }
   error?: string
 }

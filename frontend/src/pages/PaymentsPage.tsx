@@ -8,7 +8,7 @@ import { FormDialog, FormField, FormSelect } from '@/components/ui/form-dialog'
 import { Input } from '@/components/ui/input'
 import { EmptyState, LoadingSkeleton, PageHeader, StatusBadge } from '@/components/ui/page'
 import { api, type Lease, type Payment } from '@/lib/api'
-import { formatCurrency, formatDate, formatUF } from '@/lib/utils'
+import { formatCurrency, formatDate } from '@/lib/utils'
 
 const emptyForm = { type: 'rent', amount: '', due_date: '', property_id: '', lease_id: '', tenant_id: '', notes: '' }
 
@@ -46,7 +46,10 @@ const paymentTypeLabels: Record<string, string> = {
   deposit: 'Depósito',
   expense: 'Gasto',
   common_fee: 'Gasto común',
-  dividend: 'Dividendo hipotecario',
+}
+
+function isRentPagePayment(p: Payment): boolean {
+  return p.type !== 'dividend'
 }
 
 function formatPaymentDescription(p: Payment): string {
@@ -61,11 +64,6 @@ function formatPaymentDescription(p: Payment): string {
       return p.notes?.trim() || 'Gasto'
     case 'common_fee':
       return p.notes?.trim() || 'Gasto común'
-    case 'dividend': {
-      const month = p.due_date?.slice(0, 7)
-      const bank = p.bank_name ? ` · ${p.bank_name}` : ''
-      return month ? `Dividendo ${formatMonthLabel(month)}${bank}` : `Dividendo hipotecario${bank}`
-    }
     default:
       return p.notes?.trim() || paymentTypeLabels[p.type] || p.type
   }
@@ -141,6 +139,11 @@ export function PaymentsPage() {
   const activeLeasesCount = useMemo(
     () => (leases?.data ?? []).filter((lease) => lease.status === 'active').length,
     [leases],
+  )
+
+  const rentPayments = useMemo(
+    () => (data?.data ?? []).filter(isRentPagePayment),
+    [data],
   )
 
   const { data: currentMonthStatus } = useQuery({
@@ -242,7 +245,7 @@ export function PaymentsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title={t('nav.payments')} count={data?.total}
+      <PageHeader title={t('nav.payments')} count={rentPayments.length}
         action={
           <div className="flex flex-wrap gap-2">
             <span title={generateButtonTitle} className="inline-flex">
@@ -264,9 +267,9 @@ export function PaymentsPage() {
           </div>
         } />
       <Card>
-        <CardHeader><CardTitle className="text-base">Historial de pagos</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">Historial de pagos de arriendo</CardTitle></CardHeader>
         <CardContent className="p-0">
-          {!data?.data.length ? <EmptyState message="Sin pagos registrados." /> : (
+          {!rentPayments.length ? <EmptyState message="Sin pagos de arriendo registrados." /> : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -281,16 +284,14 @@ export function PaymentsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.data.map((p) => (
+                  {rentPayments.map((p) => (
                     <tr key={p.id} className="border-b hover:bg-muted/50">
                       <td className="p-4">{paymentTypeLabels[p.type] ?? p.type}</td>
                       <td className="p-4 text-muted-foreground">{formatPaymentDescription(p)}</td>
                       <td className="p-4">{p.tenant_id ? tenantMap.get(p.tenant_id) ?? '—' : '—'}</td>
                       <td className="p-4"><StatusBadge status={p.status} /></td>
                       <td className="p-4 font-medium">
-                        {p.type === 'dividend' && p.amount.currency === 'UF'
-                          ? formatUF(p.amount.amount)
-                          : formatCurrency(p.amount.amount, p.amount.currency)}
+                        {formatCurrency(p.amount.amount, p.amount.currency)}
                       </td>
                       <td className="p-4">{formatDate(p.due_date)}</td>
                       <td className="p-4">

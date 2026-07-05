@@ -1,22 +1,29 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/richard/my-rent-go/internal/application/auth"
 	appproperty "github.com/richard/my-rent-go/internal/application/property"
+	domainorg "github.com/richard/my-rent-go/internal/domain/organization"
 	domain "github.com/richard/my-rent-go/internal/domain/property"
 	"github.com/richard/my-rent-go/internal/interfaces/http/middleware"
 )
 
-type AuthHandler struct {
-	auth *auth.AuthService
+type OrganizationReader interface {
+	FindByID(ctx context.Context, id string) (*domainorg.Organization, error)
 }
 
-func NewAuthHandler(svc *auth.AuthService) *AuthHandler {
-	return &AuthHandler{auth: svc}
+type AuthHandler struct {
+	auth *auth.AuthService
+	orgs OrganizationReader
+}
+
+func NewAuthHandler(svc *auth.AuthService, orgs OrganizationReader) *AuthHandler {
+	return &AuthHandler{auth: svc, orgs: orgs}
 }
 
 // Register godoc
@@ -81,7 +88,32 @@ func (h *AuthHandler) Me(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, user)
+	if user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	resp := gin.H{
+		"id":            user.ID,
+		"email":         user.Email,
+		"first_name":    user.FirstName,
+		"last_name":     user.LastName,
+		"phone":         user.Phone,
+		"avatar_url":    user.AvatarURL,
+		"active":        user.Active,
+		"mfa_enabled":   user.MFAEnabled,
+		"organizations": user.Organizations,
+		"preferences":   user.Preferences,
+		"current_org_id":   claims.OrgID,
+		"current_role":     claims.Role,
+		"current_org_name": "",
+	}
+	if h.orgs != nil && claims.OrgID != "" {
+		if org, err := h.orgs.FindByID(c.Request.Context(), claims.OrgID); err == nil && org != nil {
+			resp["current_org_name"] = org.Name
+		}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 type PropertyHandler struct {

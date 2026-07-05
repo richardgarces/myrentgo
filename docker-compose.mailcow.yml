@@ -1,0 +1,44 @@
+# Mailcow — servidor de correo self-hosted (meincart.com)
+#
+# ⚠️  NO es un servicio más de MyRent Go. Mailcow es un stack completo
+#     (Postfix, Dovecot, Rspamd, SOGo, nginx, …) con decenas de contenedores.
+#
+# ⚠️  NO combinar con docker-compose.yml ni levantar junto al stack de desarrollo.
+#     Conflicta en puertos 80/443 (y opcionalmente 25/587/465) con MyRent (3000, 7070, 27017).
+#
+# Recomendado: VPS dedicado con FQDN mail.meincart.com (producción).
+#
+# ── Instalación (una vez) ─────────────────────────────────────────────────────
+#   ./scripts/setup-mailcow.sh
+#   # o: ./myrent.sh mailcow-setup
+#
+# ── Arranque / parada (después del setup) ──────────────────────────────────────
+#   cd mailcow && docker compose pull && docker compose up -d
+#   cd mailcow && docker compose down
+#   # o: ./myrent.sh mailcow-start | mailcow-stop
+#
+# ── Puertos que Mailcow necesita en el VPS ───────────────────────────────────
+#   25   SMTP (MX entrante)
+#   465  SMTPS
+#   587  Submission (MyRent Go SMTP saliente)
+#   80   HTTP (Let's Encrypt / redirección)
+#   443  HTTPS (panel admin + webmail)
+#   143  IMAP / 993 IMAPS / 110 POP / 995 POPS / 4190 Sieve
+#
+# ── MyRent Go (.env en el servidor de la app, NO en Mailcow) ───────────────────
+#   SMTP_HOST=mail.meincart.com
+#   SMTP_PORT=587
+#   SMTP_USER=noreply@meincart.com
+#   SMTP_PASSWORD=<contraseña del buzón en Mailcow>
+#   SMTP_FROM=noreply@meincart.com
+#
+# Documentación completa: docs/Cloudflare/mailcow.md
+#
+# Este archivo NO incluye servicios Docker: el compose real vive en mailcow/
+# (clon de mailcow-dockerized, gitignored). Ver scripts/setup-mailcow.sh.
+
+name: mailcow-meincart
+
+# Placeholder para que `docker compose -f docker-compose.mailcow.yml config` no falle
+# si alguien lo ejecuta por error antes del setup. Los servicios reales están en mailcow/.
+services: {}

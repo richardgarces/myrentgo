@@ -16,13 +16,32 @@ type Service struct {
 	mailer        *email.Client
 	recipients    *mongodb.EmailRecipientRepo
 	notifications *mongodb.NotificationRepo
+	settings      *mongodb.NotificationSettingsRepo
+	payments      *mongodb.PaymentRepo
+	maintenance   *mongodb.MaintenanceRepo
+	tenants       *mongodb.TenantRepo
+	properties    *mongodb.PropertyRepo
 }
 
-func NewService(mailer *email.Client, recipients *mongodb.EmailRecipientRepo, notifications *mongodb.NotificationRepo) *Service {
+func NewService(
+	mailer *email.Client,
+	recipients *mongodb.EmailRecipientRepo,
+	notifications *mongodb.NotificationRepo,
+	settings *mongodb.NotificationSettingsRepo,
+	payments *mongodb.PaymentRepo,
+	maintenance *mongodb.MaintenanceRepo,
+	tenants *mongodb.TenantRepo,
+	properties *mongodb.PropertyRepo,
+) *Service {
 	return &Service{
 		mailer:        mailer,
 		recipients:    recipients,
 		notifications: notifications,
+		settings:      settings,
+		payments:      payments,
+		maintenance:   maintenance,
+		tenants:       tenants,
+		properties:    properties,
 	}
 }
 
@@ -126,6 +145,16 @@ func (s *Service) sendOne(ctx context.Context, orgID string, n *domainnotif.Noti
 	}
 
 	subject, htmlBody, textBody := email.RenderNotification(n.Title, n.Title, n.Message, string(n.Type))
+	if n.Type == domainnotif.TypeMaintenanceDue {
+		ctxData := email.MaintenanceContext{
+			PropertyName:  n.Metadata["property_name"],
+			Title:         n.Metadata["maintenance_title"],
+			TypeLabel:     email.MaintenanceTypeLabel(n.Metadata["maintenance_type"]),
+			ScheduledDate: n.Metadata["scheduled_date"],
+			Cost:          n.Metadata["cost"],
+		}
+		subject, htmlBody, textBody = email.RenderMaintenanceNotification(n.Title, n.Message, ctxData)
+	}
 	sendErr := s.mailer.Send(ctx, email.Message{
 		To:       emails,
 		Subject:  subject,

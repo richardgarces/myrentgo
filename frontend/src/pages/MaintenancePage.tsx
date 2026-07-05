@@ -10,6 +10,21 @@ import { EmptyState, LoadingSkeleton, PageHeader, StatusBadge } from '@/componen
 import { api } from '@/lib/api'
 import { formatCurrency, formatDate } from '@/lib/utils'
 
+const MAINTENANCE_TYPES = ['preventive', 'corrective', 'emergency'] as const
+
+const maintenanceTypeLabels: Record<string, string> = {
+  preventive: 'Preventiva',
+  corrective: 'Correctiva',
+  emergency: 'Emergencia',
+}
+
+const maintenanceStatusLabels: Record<string, string> = {
+  scheduled: 'Programada',
+  in_progress: 'En progreso',
+  completed: 'Completada',
+  cancelled: 'Cancelada',
+}
+
 export function MaintenancePage() {
   const { t } = useTranslation()
   const qc = useQueryClient()
@@ -49,8 +64,8 @@ export function MaintenancePage() {
                 {data.data.map((m) => (
                   <tr key={m.id} className="border-b hover:bg-muted/50">
                     <td className="p-4 font-medium">{m.title}</td>
-                    <td className="p-4">{m.type}</td>
-                    <td className="p-4"><StatusBadge status={m.status} /></td>
+                    <td className="p-4">{maintenanceTypeLabels[m.type] ?? m.type}</td>
+                    <td className="p-4"><StatusBadge status={m.status} label={maintenanceStatusLabels[m.status]} /></td>
                     <td className="p-4">{formatDate(m.scheduled_date)}</td>
                     <td className="p-4">{formatCurrency(m.cost?.amount ?? 0)}</td>
                   </tr>
@@ -72,7 +87,9 @@ export function MaintenancePage() {
         <FormField label="Título"><Input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></FormField>
         <FormField label="Tipo">
           <FormSelect value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
-            <option value="preventive">Preventiva</option><option value="corrective">Correctiva</option>
+            {MAINTENANCE_TYPES.map((type) => (
+              <option key={type} value={type}>{maintenanceTypeLabels[type]}</option>
+            ))}
           </FormSelect>
         </FormField>
         <FormField label="Fecha"><Input type="date" required value={form.scheduled_date} onChange={(e) => setForm({ ...form, scheduled_date: e.target.value })} /></FormField>

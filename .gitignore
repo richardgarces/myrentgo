@@ -3,6 +3,9 @@ node_modules/
 frontend/dist/
 frontend/node_modules/
 
+# Mailcow (clon mailcow-dockerized — datos, certificados, secretos)
+mailcow/
+
 # Runtime / local dev
 .myrent/
 bin/
@@ -19,6 +22,7 @@ bin/
 # Storage
 storage/
 backups/
+exports/
 
 # IDE
 .idea/

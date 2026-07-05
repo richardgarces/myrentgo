@@ -21,7 +21,6 @@ const CrmPage = lazy(() => import('@/pages/CrmPage').then((m) => ({ default: m.C
 const MaintenancePage = lazy(() => import('@/pages/MaintenancePage').then((m) => ({ default: m.MaintenancePage })))
 const TicketsPage = lazy(() => import('@/pages/TicketsPage').then((m) => ({ default: m.TicketsPage })))
 const NotificationsPage = lazy(() => import('@/pages/NotificationsPage').then((m) => ({ default: m.NotificationsPage })))
-const EmailNotificationsPage = lazy(() => import('@/pages/EmailNotificationsPage').then((m) => ({ default: m.EmailNotificationsPage })))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 const ExportPage = lazy(() => import('@/pages/ExportPage').then((m) => ({ default: m.ExportPage })))
 
@@ -103,7 +102,7 @@ export default function App() {
             <Route path="maintenance" element={<PageLoader><MaintenancePage /></PageLoader>} />
             <Route path="tickets" element={<PageLoader><TicketsPage /></PageLoader>} />
             <Route path="notifications" element={<PageLoader><NotificationsPage /></PageLoader>} />
-            <Route path="email-notifications" element={<PageLoader><EmailNotificationsPage /></PageLoader>} />
+            <Route path="email-notifications" element={<Navigate to="/notifications?tab=destinatarios" replace />} />
             <Route path="export" element={<PageLoader><ExportPage /></PageLoader>} />
             <Route path="settings" element={<PageLoader><SettingsPage /></PageLoader>} />
           </Route>

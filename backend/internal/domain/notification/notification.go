@@ -9,9 +9,10 @@ import (
 type Type string
 
 const (
-	TypePaymentDue     Type = "payment_due"
-	TypePaymentOverdue Type = "payment_overdue"
-	TypeLateInterest   Type = "late_interest"
+	TypePaymentDue      Type = "payment_due"
+	TypePaymentOverdue  Type = "payment_overdue"
+	TypeLateInterest    Type = "late_interest"
+	TypeMaintenanceDue  Type = "maintenance_due"
 )
 
 type Channel string

@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import {
   Building2, Calendar, CreditCard, FileText, LayoutDashboard,
-  Menu, Moon, Settings, Sun, Users, Wrench, X, Briefcase, Ticket, BarChart3, Bell, Download, Landmark, Mail,
+  Menu, Moon, Settings, Sun, Users, Wrench, X, Briefcase, Ticket, BarChart3, Bell, Download, Landmark,
 } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -26,7 +26,6 @@ const navItems = [
   { to: '/maintenance', icon: Wrench, key: 'maintenance' },
   { to: '/tickets', icon: Ticket, key: 'tickets' },
   { to: '/notifications', icon: Bell, key: 'notifications' },
-  { to: '/email-notifications', icon: Mail, key: 'emailNotifications' },
   { to: '/export', icon: Download, key: 'export' },
   { to: '/settings', icon: Settings, key: 'settings' },
 ]

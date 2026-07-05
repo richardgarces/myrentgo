@@ -30,6 +30,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': { target: process.env.VITE_API_PROXY || 'http://localhost:7070', changeOrigin: true },
+      '/health': { target: process.env.VITE_API_PROXY || 'http://localhost:7070', changeOrigin: true },
       '/ws': { target: process.env.VITE_API_PROXY?.replace('http', 'ws') || 'ws://localhost:7070', ws: true },
     },
   },

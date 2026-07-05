@@ -8,11 +8,12 @@ import (
 type NotificationType string
 
 const (
-	TypePaymentDue     NotificationType = "payment_due"
-	TypePaymentOverdue NotificationType = "payment_overdue"
-	TypeLateInterest   NotificationType = "late_interest"
-	TypeDividendDue    NotificationType = "dividend_due"
-	TypeLeaseExpiring  NotificationType = "lease_expiring"
+	TypePaymentDue      NotificationType = "payment_due"
+	TypePaymentOverdue  NotificationType = "payment_overdue"
+	TypeLateInterest    NotificationType = "late_interest"
+	TypeDividendDue     NotificationType = "dividend_due"
+	TypeLeaseExpiring   NotificationType = "lease_expiring"
+	TypeMaintenanceDue  NotificationType = "maintenance_due"
 )
 
 var AllNotificationTypes = []NotificationType{
@@ -21,6 +22,7 @@ var AllNotificationTypes = []NotificationType{
 	TypeLateInterest,
 	TypeDividendDue,
 	TypeLeaseExpiring,
+	TypeMaintenanceDue,
 }
 
 func IsValidNotificationType(v string) bool {

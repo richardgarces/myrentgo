@@ -60,6 +60,8 @@ type NotifyConfig struct {
 	FromEmail     string // deprecated alias for SMTPFrom
 	TelegramToken string
 	WhatsAppAPI   string
+	SchedulerEnabled   bool
+	SchedulerInterval  time.Duration
 }
 
 func Load() *Config {
@@ -99,11 +101,13 @@ func Load() *Config {
 			SMTPPort:      getIntEnv("SMTP_PORT", 587),
 			SMTPUser:      getEnv("SMTP_USER", ""),
 			SMTPPassword:  getEnv("SMTP_PASSWORD", ""),
-			SMTPFrom:      firstNonEmpty(getEnv("SMTP_FROM", ""), getEnv("FROM_EMAIL", "noreply@myrent.local")),
+			SMTPFrom:      firstNonEmpty(getEnv("SMTP_FROM", ""), getEnv("FROM_EMAIL", "")),
 			SMTPFromName:  getEnv("SMTP_FROM_NAME", "MyRent Go"),
 			FromEmail:     getEnv("FROM_EMAIL", "noreply@myrent.local"),
 			TelegramToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
 			WhatsAppAPI:   getEnv("WHATSAPP_API_URL", ""),
+			SchedulerEnabled:  getBoolEnv("EMAIL_SCHEDULER_ENABLED", true),
+			SchedulerInterval: getDurationEnv("EMAIL_SCHEDULER_INTERVAL", 24*time.Hour),
 		},
 	}
 }

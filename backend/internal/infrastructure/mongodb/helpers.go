@@ -9,10 +9,11 @@ import (
 )
 
 type ListParams struct {
-	Page   int
-	Limit  int
-	Filter bson.M
-	Sort   bson.D
+	Page       int
+	Limit      int
+	Filter     bson.M
+	Sort       bson.D
+	Projection bson.M
 }
 
 func listByOrg[T any](ctx context.Context, col *mongo.Collection, orgID string, p ListParams) ([]T, int64, error) {
@@ -42,6 +43,9 @@ func listByOrg[T any](ctx context.Context, col *mongo.Collection, orgID string, 
 		SetSkip(int64((p.Page - 1) * p.Limit)).
 		SetLimit(int64(p.Limit)).
 		SetSort(sort)
+	if len(p.Projection) > 0 {
+		opts.SetProjection(p.Projection)
+	}
 
 	cursor, err := col.Find(ctx, query, opts)
 	if err != nil {

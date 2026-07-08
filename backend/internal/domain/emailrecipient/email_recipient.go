@@ -35,13 +35,19 @@ func IsValidNotificationType(v string) bool {
 }
 
 type EmailRecipient struct {
-	shared.Entity      `bson:",inline"`
-	OrganizationID     string             `json:"organization_id" bson:"organization_id"`
-	Email              string             `json:"email" bson:"email"`
-	Name               string             `json:"name" bson:"name"`
-	Label              string             `json:"label,omitempty" bson:"label,omitempty"`
-	Enabled            bool               `json:"enabled" bson:"enabled"`
-	NotificationTypes  []NotificationType `json:"notification_types" bson:"notification_types"`
+	shared.Entity     `bson:",inline"`
+	OrganizationID    string             `json:"organization_id" bson:"organization_id"`
+	Email             string             `json:"email" bson:"email"`
+	Name              string             `json:"name" bson:"name"`
+	Label             string             `json:"label,omitempty" bson:"label,omitempty"`
+	PropertyID        string             `json:"property_id,omitempty" bson:"property_id,omitempty"`
+	TenantID          string             `json:"tenant_id,omitempty" bson:"tenant_id,omitempty"`
+	Enabled           bool               `json:"enabled" bson:"enabled"`
+	NotificationTypes []NotificationType `json:"notification_types" bson:"notification_types"`
+}
+
+func (r *EmailRecipient) IsPropertyLinked() bool {
+	return r.PropertyID != ""
 }
 
 func NewEmailRecipient(orgID, email, name, label string, types []NotificationType) *EmailRecipient {

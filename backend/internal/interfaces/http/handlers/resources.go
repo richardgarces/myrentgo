@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -20,12 +21,18 @@ import (
 	"github.com/richard/my-rent-go/internal/domain/shared"
 	domaintenant "github.com/richard/my-rent-go/internal/domain/tenant"
 	domainticket "github.com/richard/my-rent-go/internal/domain/ticket"
+	"github.com/richard/my-rent-go/internal/infrastructure/mindicador"
 	"github.com/richard/my-rent-go/internal/infrastructure/mongodb"
+	"github.com/richard/my-rent-go/internal/infrastructure/storage"
+	"github.com/richard/my-rent-go/internal/infrastructure/syslog"
+	"github.com/richard/my-rent-go/internal/infrastructure/metrics"
 	"github.com/richard/my-rent-go/internal/interfaces/http/middleware"
 )
 
 type ResourcesHandler struct {
 	db         *mongodb.Client
+	docStore   *storage.DocumentStore
+	uf         *mindicador.UFProvider
 	properties *mongodb.PropertyRepo
 	tenants    *mongodb.TenantRepo
 	leases     *mongodb.LeaseRepo
@@ -39,9 +46,11 @@ type ResourcesHandler struct {
 	notif    *mongodb.NotificationRepo
 }
 
-func NewResourcesHandler(db *mongodb.Client) *ResourcesHandler {
+func NewResourcesHandler(db *mongodb.Client, docStore *storage.DocumentStore, uf *mindicador.UFProvider) *ResourcesHandler {
 	return &ResourcesHandler{
 		db:         db,
+		docStore:   docStore,
+		uf:         uf,
 		properties: mongodb.NewPropertyRepo(db),
 		tenants:    mongodb.NewTenantRepo(db),
 		leases:     mongodb.NewLeaseRepo(db),
@@ -225,6 +234,8 @@ type createLeaseReq struct {
 	MonthlyRent         float64 `json:"monthly_rent" binding:"required"`
 	IPCAdjustment       bool    `json:"ipc_adjustment"`
 	PaymentDay          int     `json:"payment_day"`
+	AutoRenew           *bool   `json:"auto_renew"`
+	RenewalPeriodMonths int     `json:"renewal_period_months"`
 }
 
 func parseOptionalDate(s string) (*time.Time, error) {
@@ -372,6 +383,7 @@ func (h *ResourcesHandler) CreateLease(c *gin.Context) {
 	if req.PaymentDay > 0 {
 		l.PaymentDay = req.PaymentDay
 	}
+	applyLeaseRenewalFields(l, req.AutoRenew, req.RenewalPeriodMonths)
 	if err := h.leases.Create(c.Request.Context(), l); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -404,6 +416,22 @@ type updateLeaseReq struct {
 	MonthlyRent         float64 `json:"monthly_rent" binding:"required"`
 	IPCAdjustment       bool    `json:"ipc_adjustment"`
 	PaymentDay          int     `json:"payment_day"`
+	AutoRenew           *bool   `json:"auto_renew"`
+	RenewalPeriodMonths int     `json:"renewal_period_months"`
+}
+
+func applyLeaseRenewalFields(l *domainlease.Lease, autoRenew *bool, renewalPeriodMonths int) {
+	if autoRenew != nil {
+		l.AutoRenew = autoRenew
+	} else if l.AutoRenew == nil {
+		enabled := true
+		l.AutoRenew = &enabled
+	}
+	if renewalPeriodMonths > 0 {
+		l.RenewalPeriodMonths = renewalPeriodMonths
+	} else if l.RenewalPeriodMonths == 0 {
+		l.RenewalPeriodMonths = 12
+	}
 }
 
 func (h *ResourcesHandler) UpdateLease(c *gin.Context) {
@@ -481,6 +509,7 @@ func (h *ResourcesHandler) UpdateLease(c *gin.Context) {
 	if req.PaymentDay > 0 {
 		l.PaymentDay = req.PaymentDay
 	}
+	applyLeaseRenewalFields(l, req.AutoRenew, req.RenewalPeriodMonths)
 	if err := h.leases.Update(c.Request.Context(), l); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1137,6 +1166,10 @@ func (h *ResourcesHandler) CreateContact(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if !domaincrm.IsValidContactType(req.Type) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid type"})
+		return
+	}
 	orgID := middleware.GetOrgID(c)
 	contact := domaincrm.NewContact(orgID, domaincrm.ContactType(req.Type), req.Name)
 	contact.Contact = shared.ContactInfo{Email: req.Email, Phone: req.Phone}
@@ -1145,6 +1178,78 @@ func (h *ResourcesHandler) CreateContact(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, contact)
+}
+
+func (h *ResourcesHandler) GetContact(c *gin.Context) {
+	orgID := middleware.GetOrgID(c)
+	id := c.Param("id")
+	contact, err := h.contacts.FindByID(c.Request.Context(), orgID, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if contact == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contact not found"})
+		return
+	}
+	c.JSON(http.StatusOK, contact)
+}
+
+type updateContactReq struct {
+	Type  string `json:"type" binding:"required"`
+	Name  string `json:"name" binding:"required"`
+	Email string `json:"email"`
+	Phone string `json:"phone"`
+}
+
+func (h *ResourcesHandler) UpdateContact(c *gin.Context) {
+	var req updateContactReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !domaincrm.IsValidContactType(req.Type) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid type"})
+		return
+	}
+	orgID := middleware.GetOrgID(c)
+	id := c.Param("id")
+	contact, err := h.contacts.FindByID(c.Request.Context(), orgID, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if contact == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contact not found"})
+		return
+	}
+	contact.Type = domaincrm.ContactType(req.Type)
+	contact.Name = req.Name
+	contact.Contact = shared.ContactInfo{Email: req.Email, Phone: req.Phone}
+	if err := h.contacts.Update(c.Request.Context(), contact); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, contact)
+}
+
+func (h *ResourcesHandler) DeleteContact(c *gin.Context) {
+	orgID := middleware.GetOrgID(c)
+	id := c.Param("id")
+	contact, err := h.contacts.FindByID(c.Request.Context(), orgID, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if contact == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contact not found"})
+		return
+	}
+	if err := h.contacts.Delete(c.Request.Context(), orgID, id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // Maintenance
@@ -1165,6 +1270,7 @@ type createMaintenanceReq struct {
 	Type          string  `json:"type"`
 	ScheduledDate string  `json:"scheduled_date" binding:"required"`
 	Cost          float64 `json:"cost"`
+	Notes         string  `json:"notes"`
 }
 
 func (h *ResourcesHandler) CreateMaintenance(c *gin.Context) {
@@ -1185,11 +1291,87 @@ func (h *ResourcesHandler) CreateMaintenance(c *gin.Context) {
 	}
 	m := domainmaint.NewMaintenance(orgID, req.PropertyID, req.Title, mType, scheduled)
 	m.Cost = shared.NewMoney(req.Cost, "CLP")
+	m.Description = req.Notes
 	if err := h.maint.Create(c.Request.Context(), m); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, m)
+}
+
+type updateMaintenanceReq struct {
+	PropertyID    string  `json:"property_id" binding:"required"`
+	Title         string  `json:"title" binding:"required"`
+	Type          string  `json:"type" binding:"required"`
+	ScheduledDate string  `json:"scheduled_date" binding:"required"`
+	Cost          float64 `json:"cost"`
+	Status        string  `json:"status" binding:"required"`
+	Notes         string  `json:"notes"`
+}
+
+func (h *ResourcesHandler) UpdateMaintenance(c *gin.Context) {
+	var req updateMaintenanceReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	mType := domainmaint.Type(req.Type)
+	if !domainmaint.IsValidType(mType) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid type"})
+		return
+	}
+	status := domainmaint.Status(req.Status)
+	if !domainmaint.IsValidStatus(status) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status"})
+		return
+	}
+	scheduled, err := time.Parse("2006-01-02", req.ScheduledDate)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid scheduled_date"})
+		return
+	}
+	orgID := middleware.GetOrgID(c)
+	id := c.Param("id")
+	m, err := h.maint.FindByID(c.Request.Context(), orgID, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if m == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "maintenance not found"})
+		return
+	}
+	m.PropertyID = req.PropertyID
+	m.Title = req.Title
+	m.Type = mType
+	m.ScheduledDate = scheduled
+	m.Cost = shared.NewMoney(req.Cost, "CLP")
+	m.Status = status
+	m.Description = req.Notes
+	if err := h.maint.Update(c.Request.Context(), m); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, m)
+}
+
+func (h *ResourcesHandler) DeleteMaintenance(c *gin.Context) {
+	orgID := middleware.GetOrgID(c)
+	id := c.Param("id")
+	m, err := h.maint.FindByID(c.Request.Context(), orgID, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if m == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "maintenance not found"})
+		return
+	}
+	if err := h.maint.Delete(c.Request.Context(), orgID, id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // Tickets
@@ -1236,7 +1418,13 @@ func (h *ResourcesHandler) ListDocuments(c *gin.Context) {
 	orgID := middleware.GetOrgID(c)
 	page, limit := parsePageLimit(c)
 	omitFileData := c.Query("omit_file_data") == "1" || c.Query("omit_file_data") == "true"
-	items, total, err := h.docs.List(c.Request.Context(), orgID, page, limit, c.Query("category"), c.Query("entity_type"), c.Query("entity_id"), omitFileData)
+	entityType := c.Query("entity_type")
+	entityID := c.Query("entity_id")
+	if leaseID := c.Query("lease_id"); leaseID != "" {
+		entityType = "lease"
+		entityID = leaseID
+	}
+	items, total, err := h.docs.List(c.Request.Context(), orgID, page, limit, c.Query("category"), entityType, entityID, omitFileData)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1267,17 +1455,36 @@ func (h *ResourcesHandler) CreateDocument(c *gin.Context) {
 	if d.FileName == "" {
 		d.FileName = req.Title + ".pdf"
 	}
-	d.FileData = req.FileData
 	d.MimeType = req.MimeType
 	if d.MimeType == "" {
 		d.MimeType = "application/pdf"
 	}
 	d.SizeBytes = req.SizeBytes
 	d.UploadedBy = middleware.GetClaims(c).UserID
+	if req.FileData != "" {
+		if err := h.persistDocumentFile(d, req.FileData); err != nil {
+			h.respondDocumentFileError(c, err)
+			return
+		}
+	}
 	if err := h.docs.Create(c.Request.Context(), d); err != nil {
+		h.removeDocumentFile(d)
+		orgID := middleware.GetOrgID(c)
+		userID := ""
+		if claims := middleware.GetClaims(c); claims != nil {
+			userID = claims.UserID
+		}
+		metrics.RecordDocumentUpload(false)
+		syslog.LogDocumentUploadError(orgID, userID, err.Error())
+		if isMongoDocumentTooLarge(err) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": documentPersistErrorMessage(err)})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	metrics.RecordDocumentUpload(true)
+	h.stripDocumentPayload(d)
 	c.JSON(http.StatusCreated, d)
 }
 
@@ -1293,6 +1500,7 @@ func (h *ResourcesHandler) GetDocument(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "document not found"})
 		return
 	}
+	h.stripDocumentPayload(d)
 	c.JSON(http.StatusOK, d)
 }
 
@@ -1332,7 +1540,10 @@ func (h *ResourcesHandler) UpdateDocument(c *gin.Context) {
 		d.FileName = req.FileName
 	}
 	if req.FileData != "" {
-		d.FileData = req.FileData
+		if err := h.persistDocumentFile(d, req.FileData); err != nil {
+			h.respondDocumentFileError(c, err)
+			return
+		}
 	}
 	if req.MimeType != "" {
 		d.MimeType = req.MimeType
@@ -1341,9 +1552,14 @@ func (h *ResourcesHandler) UpdateDocument(c *gin.Context) {
 		d.SizeBytes = req.SizeBytes
 	}
 	if err := h.docs.Update(c.Request.Context(), d); err != nil {
+		if isMongoDocumentTooLarge(err) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": documentPersistErrorMessage(err)})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	h.stripDocumentPayload(d)
 	c.JSON(http.StatusOK, d)
 }
 
@@ -1368,6 +1584,7 @@ func (h *ResourcesHandler) DeleteDocument(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "No se puede eliminar: documento vinculado a un arriendo o tasación"})
 		return
 	}
+	h.removeDocumentFile(d)
 	if err := h.docs.Delete(c.Request.Context(), orgID, id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1398,42 +1615,237 @@ func (h *ResourcesHandler) DeactivateDocument(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "inactive"})
 }
 
-// Mortgages / Finance
+// Mortgages / Finance — derived from property.financials (UF), CLP equivalents at current UF.
+type propertyMortgageView struct {
+	ID                string       `json:"id"`
+	PropertyID        string       `json:"property_id"`
+	PropertyName      string       `json:"property_name"`
+	BankName          string       `json:"bank_name,omitempty"`
+	BankID            string       `json:"bank_id,omitempty"`
+	OriginalLoanUF    float64      `json:"original_loan_uf"`
+	CommercialValueUF float64      `json:"commercial_value_uf"`
+	CommercialValue   shared.Money `json:"commercial_value"`
+	DebtUF            float64      `json:"debt_uf"`
+	MonthlyMortgageUF float64      `json:"monthly_mortgage_uf"`
+	LoanTermYears     int          `json:"loan_term_years,omitempty"`
+	InstallmentsPaid  int          `json:"installments_paid,omitempty"`
+	InterestRate      float64      `json:"interest_rate,omitempty"`
+	CreditNumber      string       `json:"credit_number,omitempty"`
+	PaymentBank       string       `json:"payment_bank,omitempty"`
+	PacEnabled        bool         `json:"pac_enabled"`
+	PaymentStartDate  *time.Time   `json:"payment_start_date,omitempty"`
+	LoanAmount        shared.Money `json:"loan_amount"`
+	MonthlyPayment    shared.Money `json:"monthly_payment"`
+	PresentValue      float64      `json:"present_value"`
+	Active            bool         `json:"active"`
+}
+
+func propertyToMortgageView(prop domainprop.Property, ufRate float64) propertyMortgageView {
+	prop.Financials.NormalizeMortgageUF()
+	f := prop.Financials
+	loanCLP := f.OriginalLoanUF * ufRate
+	commercialCLP := f.CommercialValueUF * ufRate
+	debtCLP := f.DebtUF * ufRate
+	monthlyCLP := f.MonthlyMortgageUF * ufRate
+	presentValue := debtCLP
+	if presentValue <= 0 && f.MonthlyMortgageUF > 0 && f.InterestRate > 0 && f.LoanTermYears > 0 {
+		remaining := f.LoanTermYears*12 - f.InstallmentsPaid
+		if remaining < 0 {
+			remaining = 0
+		}
+		m := domainmort.Mortgage{
+			MonthlyPayment: shared.NewMoney(monthlyCLP, "CLP"),
+			InterestRate:   f.InterestRate,
+		}
+		presentValue = m.CalculatePresentValue(f.InterestRate, remaining)
+	}
+	return propertyMortgageView{
+		ID:                prop.ID,
+		PropertyID:        prop.ID,
+		PropertyName:      prop.Name,
+		BankName:          f.BankName,
+		OriginalLoanUF:    f.OriginalLoanUF,
+		CommercialValueUF: f.CommercialValueUF,
+		CommercialValue:   shared.NewMoney(commercialCLP, "CLP"),
+		DebtUF:            f.DebtUF,
+		MonthlyMortgageUF: f.MonthlyMortgageUF,
+		LoanTermYears:     f.LoanTermYears,
+		InstallmentsPaid:  f.InstallmentsPaid,
+		InterestRate:      f.InterestRate,
+		CreditNumber:      f.CreditNumber,
+		PaymentBank:       f.PaymentBank,
+		PacEnabled:        f.PacEnabled,
+		PaymentStartDate:  f.PaymentStartDate,
+		LoanAmount:        shared.NewMoney(loanCLP, "CLP"),
+		MonthlyPayment:    shared.NewMoney(monthlyCLP, "CLP"),
+		PresentValue:      presentValue,
+		Active:            f.MonthlyMortgageUF > 0 || f.DebtUF > 0 || f.OriginalLoanUF > 0,
+	}
+}
+
+func (h *ResourcesHandler) currentUFRate(ctx context.Context) float64 {
+	if h.uf == nil {
+		return 0
+	}
+	v, err := h.uf.GetUF(ctx)
+	if err != nil || v == nil {
+		return 0
+	}
+	return v.Value
+}
+
 func (h *ResourcesHandler) ListMortgages(c *gin.Context) {
 	orgID := middleware.GetOrgID(c)
 	page, limit := parsePageLimit(c)
-	items, total, err := h.mortgage.List(c.Request.Context(), orgID, page, limit)
+	items, total, err := h.properties.ListMortgageCreditPaginated(c.Request.Context(), orgID, page, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	listResponse(c, items, total, page, limit)
+	ufRate := h.currentUFRate(c.Request.Context())
+	views := make([]propertyMortgageView, len(items))
+	for i, prop := range items {
+		views[i] = propertyToMortgageView(prop, ufRate)
+	}
+	listResponse(c, views, total, page, limit)
 }
 
-type createMortgageReq struct {
-	PropertyID     string  `json:"property_id" binding:"required"`
-	BankID         string  `json:"bank_id"`
-	LoanAmount     float64 `json:"loan_amount" binding:"required"`
-	InterestRate   float64 `json:"interest_rate"`
-	TermMonths     int     `json:"term_months"`
-	MonthlyPayment float64 `json:"monthly_payment"`
+type mortgageFinancialsReq struct {
+	PropertyID        string  `json:"property_id"`
+	OriginalLoanUF    float64 `json:"original_loan_uf"`
+	CommercialValueUF float64 `json:"commercial_value_uf"`
+	DebtUF            float64 `json:"debt_uf"`
+	MonthlyMortgageUF float64 `json:"monthly_mortgage_uf"`
+	LoanTermYears     int     `json:"loan_term_years"`
+	InstallmentsPaid  int     `json:"installments_paid"`
+	InterestRate      float64 `json:"interest_rate"`
+	BankName          string  `json:"bank_name"`
+	CreditNumber      string  `json:"credit_number"`
+	PaymentStartDate  string  `json:"payment_start_date"`
+	PacEnabled        bool    `json:"pac_enabled"`
+	PaymentBank       string  `json:"payment_bank"`
+}
+
+func applyMortgageFinancials(f *domainprop.Financials, req mortgageFinancialsReq) error {
+	if req.InstallmentsPaid < 0 {
+		return fmt.Errorf("installments_paid cannot be negative")
+	}
+	if req.InstallmentsPaid > 0 && req.LoanTermYears > 0 {
+		max := req.LoanTermYears * 12
+		if req.InstallmentsPaid > max {
+			return fmt.Errorf("installments_paid cannot exceed %d (loan term in months)", max)
+		}
+	}
+	f.OriginalLoanUF = req.OriginalLoanUF
+	f.CommercialValueUF = req.CommercialValueUF
+	f.DebtUF = req.DebtUF
+	f.MonthlyMortgageUF = req.MonthlyMortgageUF
+	f.LoanTermYears = req.LoanTermYears
+	f.InstallmentsPaid = req.InstallmentsPaid
+	f.InterestRate = req.InterestRate
+	f.BankName = strings.TrimSpace(req.BankName)
+	f.CreditNumber = strings.TrimSpace(req.CreditNumber)
+	f.PacEnabled = req.PacEnabled
+	f.PaymentBank = strings.TrimSpace(req.PaymentBank)
+	if req.PaymentStartDate != "" {
+		if t, err := time.Parse("2006-01-02", req.PaymentStartDate); err == nil {
+			f.PaymentStartDate = &t
+		}
+	} else {
+		f.PaymentStartDate = nil
+	}
+	return nil
 }
 
 func (h *ResourcesHandler) CreateMortgage(c *gin.Context) {
-	var req createMortgageReq
+	var req mortgageFinancialsReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.PropertyID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "property_id is required"})
+		return
+	}
+	orgID := middleware.GetOrgID(c)
+	prop, err := h.properties.FindByID(c.Request.Context(), orgID, req.PropertyID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if prop == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "property not found"})
+		return
+	}
+	if err := applyMortgageFinancials(&prop.Financials, req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.properties.Update(c.Request.Context(), prop); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	view := propertyToMortgageView(*prop, h.currentUFRate(c.Request.Context()))
+	c.JSON(http.StatusCreated, view)
+}
+
+func (h *ResourcesHandler) UpdateMortgage(c *gin.Context) {
+	var req mortgageFinancialsReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	orgID := middleware.GetOrgID(c)
-	m := domainmort.NewMortgage(orgID, req.PropertyID, req.BankID, shared.NewMoney(req.LoanAmount, "CLP"), req.InterestRate, req.TermMonths)
-	m.MonthlyPayment = shared.NewMoney(req.MonthlyPayment, "CLP")
-	m.CalculatePresentValue(req.InterestRate, req.TermMonths)
-	if err := h.mortgage.Create(c.Request.Context(), m); err != nil {
+	id := c.Param("id")
+	prop, err := h.properties.FindByID(c.Request.Context(), orgID, id)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusCreated, m)
+	if prop == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "property not found"})
+		return
+	}
+	if err := applyMortgageFinancials(&prop.Financials, req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.properties.Update(c.Request.Context(), prop); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	view := propertyToMortgageView(*prop, h.currentUFRate(c.Request.Context()))
+	c.JSON(http.StatusOK, view)
+}
+
+func (h *ResourcesHandler) DeleteMortgage(c *gin.Context) {
+	orgID := middleware.GetOrgID(c)
+	id := c.Param("id")
+	prop, err := h.properties.FindByID(c.Request.Context(), orgID, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if prop == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "property not found"})
+		return
+	}
+	prop.Financials.DebtUF = 0
+	prop.Financials.OriginalLoanUF = 0
+	prop.Financials.MonthlyMortgageUF = 0
+	prop.Financials.LoanTermYears = 0
+	prop.Financials.InstallmentsPaid = 0
+	prop.Financials.InterestRate = 0
+	prop.Financials.BankName = ""
+	prop.Financials.CreditNumber = ""
+	prop.Financials.PaymentStartDate = nil
+	prop.Financials.PacEnabled = false
+	prop.Financials.PaymentBank = ""
+	if err := h.properties.Update(c.Request.Context(), prop); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // Calendar

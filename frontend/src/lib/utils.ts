@@ -13,6 +13,13 @@ export function formatDate(date: string | Date) {
   return new Intl.DateTimeFormat('es-CL').format(new Date(date))
 }
 
+export function formatDateTime(date: string | Date) {
+  return new Intl.DateTimeFormat('es-CL', {
+    dateStyle: 'short',
+    timeStyle: 'medium',
+  }).format(new Date(date))
+}
+
 export function formatUF(value: number) {
   return new Intl.NumberFormat('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value) + ' UF'
 }

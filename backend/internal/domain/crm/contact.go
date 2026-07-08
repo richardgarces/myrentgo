@@ -13,8 +13,27 @@ const (
 	TypeBank       ContactType = "bank"
 	TypeTechnician ContactType = "technician"
 	TypeSupplier   ContactType = "supplier"
+	TypeBuilding   ContactType = "building"
 	TypeOther      ContactType = "other"
 )
+
+var AllContactTypes = []ContactType{
+	TypeRealEstate,
+	TypeBank,
+	TypeTechnician,
+	TypeSupplier,
+	TypeBuilding,
+	TypeOther,
+}
+
+func IsValidContactType(v string) bool {
+	for _, t := range AllContactTypes {
+		if string(t) == v {
+			return true
+		}
+	}
+	return false
+}
 
 type Contact struct {
 	shared.Entity  `bson:",inline"`

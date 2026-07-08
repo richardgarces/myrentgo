@@ -39,6 +39,24 @@ type Maintenance struct {
 	NextDueDate    *time.Time   `json:"next_due_date,omitempty" bson:"next_due_date,omitempty"`
 }
 
+func IsValidType(t Type) bool {
+	switch t {
+	case TypePreventive, TypeCorrective, TypeEmergency:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsValidStatus(s Status) bool {
+	switch s {
+	case StatusScheduled, StatusInProgress, StatusCompleted, StatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
 func NewMaintenance(orgID, propertyID, title string, mType Type, scheduled time.Time) *Maintenance {
 	return &Maintenance{
 		Entity:         shared.NewEntity(),

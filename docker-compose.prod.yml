@@ -1,3 +1,10 @@
+# Producción — MyRent Go (meincart.com)
+# Requiere .env con secretos (copiar desde .env.production.example).
+# Levantar: ./scripts/deploy-prod.sh  o  ./myrent.sh docker-up-prod
+#
+# MongoDB: sin puerto publicado, solo red interna Docker.
+# Edge: Caddy en 80/443 (TLS automático con Let's Encrypt).
+
 services:
   mongodb:
     image: mongo:7
@@ -5,7 +12,27 @@ services:
     volumes:
       - mongodb_data:/data/db
     environment:
-      MONGO_INITDB_DATABASE: myrent
+      MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-myrent}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:?MONGO_ROOT_USER required in .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD required in .env}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mongosh",
+          "-u",
+          "${MONGO_ROOT_USER}",
+          "-p",
+          "${MONGO_ROOT_PASSWORD}",
+          "--authenticationDatabase",
+          "admin",
+          "--eval",
+          "db.adminCommand('ping')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     deploy:
       resources:
         limits:
@@ -16,29 +43,51 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: always
+    env_file:
+      - .env
     environment:
-      # Required: JWT_SECRET, CORS_ORIGINS, FRONTEND_URL (set in .env)
-      # Email: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM
       APP_ENV: production
-      MONGODB_URI: mongodb://mongodb:27017
-      MONGODB_DATABASE: myrent
-      JWT_SECRET: ${JWT_SECRET}
-      CORS_ORIGINS: ${CORS_ORIGINS}
-      FRONTEND_URL: ${FRONTEND_URL}
-      MFA_ENABLED: "true"
-      RATE_LIMIT_RPS: "20"
+      APP_PORT: "7070"
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASSWORD}@mongodb:27017/${MONGODB_DATABASE:-myrent}?authSource=admin
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-myrent}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET required in .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS required in .env}
+      FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL required in .env}
+      BASE_URL: ${BASE_URL:-${FRONTEND_URL}}
+      MFA_ENABLED: ${MFA_ENABLED:-true}
+      RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-20}
+      RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-40}
+      LOGIN_RATE_LIMIT: ${LOGIN_RATE_LIMIT:-5}
+      LOGIN_RATE_WINDOW: ${LOGIN_RATE_WINDOW:-1m}
+      BCRYPT_COST: ${BCRYPT_COST:-12}
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_PROTECTED: ${METRICS_PROTECTED:-true}
+      METRICS_REFRESH_INTERVAL_SECS: ${METRICS_REFRESH_INTERVAL_SECS:-60}
+      SYSTEM_LOG_MAX_ENTRIES: ${SYSTEM_LOG_MAX_ENTRIES:-5000}
+      DOCUMENTS_PATH: ${DOCUMENTS_PATH:-/app/storage/documents}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-30}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_FROM_NAME: ${SMTP_FROM_NAME:-MyRent Go}
+      EMAIL_SCHEDULER_ENABLED: ${EMAIL_SCHEDULER_ENABLED:-true}
+      EMAIL_SCHEDULER_INTERVAL: ${EMAIL_SCHEDULER_INTERVAL:-24h}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     volumes:
       - api_storage:/app/storage
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:7070/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     deploy:
-      replicas: 2
       resources:
         limits:
           memory: 512M
@@ -48,11 +97,19 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     restart: always
-    ports:
-      - "80:80"
-      - "443:443"
+    # Sin puertos publicados: Caddy enruta el tráfico HTTP(S) al frontend interno :8080
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128M
 
   caddy:
     image: caddy:2-alpine
@@ -60,13 +117,18 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-meincart.com}
+      ACME_EMAIL: ${ACME_EMAIL:-}
     volumes:
-      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - frontend
-      - api
+      frontend:
+        condition: service_healthy
+      api:
+        condition: service_healthy
 
 volumes:
   mongodb_data:

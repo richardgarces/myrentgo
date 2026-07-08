@@ -17,6 +17,8 @@ import (
 
 const adminEmail = "admin@myrent.local"
 const adminPassword = "admin123"
+const pentestEmail = "gestor@test.local"
+const pentestPassword = "pentest123"
 
 var orgScopedCollections = []string{
 	"properties", "tenants", "leases", "payments", "mortgages",
@@ -33,7 +35,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer db.Disconnect(context.Background())
+	defer func() {
+		if err := db.Disconnect(context.Background()); err != nil {
+			log.Printf("warning: mongodb disconnect: %v", err)
+		}
+	}()
 
 	if err := db.EnsureIndexes(ctx); err != nil {
 		log.Fatal(err)
@@ -57,13 +63,18 @@ func main() {
 		fmt.Println("  Login:    admin /", adminPassword)
 		if len(existing.Organizations) > 0 {
 			fmt.Println("  Org ID:   ", existing.Organizations[0].OrganizationID)
+			if err := ensurePentestUser(ctx, userRepo, existing.Organizations[0].OrganizationID); err != nil {
+				log.Fatal(err)
+			}
 		}
 		return
 	}
 
 	if os.Getenv("SEED_FORCE") == "1" {
 		for _, coll := range []string{"users", "organizations"} {
-			_ = db.Collection(coll).Drop(ctx)
+			if err := db.Collection(coll).Drop(ctx); err != nil {
+				log.Printf("warning: drop %s: %v", coll, err)
+			}
 		}
 		if err := db.EnsureIndexes(ctx); err != nil {
 			log.Fatal(err)
@@ -75,12 +86,19 @@ func main() {
 		log.Fatal(err)
 	}
 
-	hash, _ := bcrypt.GenerateFromPassword([]byte(adminPassword), 12)
+	hash, err := bcrypt.GenerateFromPassword([]byte(adminPassword), 12)
+	if err != nil {
+		log.Fatal(err)
+	}
 	u := user.NewUser(adminEmail, "Admin", "Sistema")
 	u.PasswordHash = string(hash)
 	u.Organizations = []user.UserOrg{{OrganizationID: org.ID, Role: user.RoleOwner}}
 
 	if err := userRepo.Create(ctx, u); err != nil {
+		log.Fatal(err)
+	}
+
+	if err := ensurePentestUser(ctx, userRepo, org.ID); err != nil {
 		log.Fatal(err)
 	}
 
@@ -95,6 +113,32 @@ func main() {
 	fmt.Println("  Password: ", adminPassword)
 	fmt.Println("  Login:    admin /", adminPassword)
 	fmt.Println("  Org ID:   ", org.ID)
+	fmt.Println("  Pentest:  ", pentestEmail, "/", pentestPassword, "(sin MFA, para security/run-pentest.sh)")
+}
+
+func ensurePentestUser(ctx context.Context, userRepo *mongodb.UserRepo, orgID string) error {
+	existing, err := userRepo.FindByEmail(ctx, pentestEmail)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(pentestPassword), 12)
+	if err != nil {
+		return err
+	}
+	u := user.NewUser(pentestEmail, "Gestor", "Pentest")
+	u.PasswordHash = string(hash)
+	u.MFAEnabled = false
+	u.Organizations = []user.UserOrg{{OrganizationID: orgID, Role: user.RoleManager}}
+
+	if err := userRepo.Create(ctx, u); err != nil {
+		return err
+	}
+	fmt.Println("Pentest user created:", pentestEmail, "/", pentestPassword)
+	return nil
 }
 
 func migrateDataToOrganization(ctx context.Context, db *mongodb.Client, targetOrgID string) (int64, error) {
@@ -158,6 +202,8 @@ func ensureOrganization(ctx context.Context, orgRepo *mongodb.OrgRepo, orgID str
 
 func init() {
 	if os.Getenv("APP_ENV") == "" {
-		os.Setenv("APP_ENV", "development")
+		if err := os.Setenv("APP_ENV", "development"); err != nil {
+			log.Printf("warning: set APP_ENV: %v", err)
+		}
 	}
 }

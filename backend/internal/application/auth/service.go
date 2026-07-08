@@ -13,6 +13,7 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrUserInactive       = errors.New("user is inactive")
 	ErrEmailExists        = errors.New("email already exists")
+	ErrEmailNotVerified   = errors.New("email not verified")
 )
 
 type RegisterCommand struct {
@@ -34,6 +35,12 @@ type TokenPair struct {
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
+type LoginResult struct {
+	Tokens      *TokenPair `json:"-"`
+	MFARequired bool       `json:"mfa_required,omitempty"`
+	MFAToken    string     `json:"mfa_token,omitempty"`
+}
+
 type UserRepository interface {
 	Create(ctx context.Context, u *domain.User) error
 	FindByEmail(ctx context.Context, email string) (*domain.User, error)
@@ -51,6 +58,10 @@ type TokenService interface {
 	Refresh(refreshToken string) (*TokenPair, error)
 }
 
+type MFAChallengeCreator interface {
+	CreateLoginChallenge(userID, email string) (string, error)
+}
+
 type Claims struct {
 	UserID string
 	Email  string
@@ -59,14 +70,19 @@ type Claims struct {
 }
 
 type AuthService struct {
-	users    UserRepository
-	orgs     OrganizationCreator
-	tokens   TokenService
+	users      UserRepository
+	orgs       OrganizationCreator
+	tokens     TokenService
+	mfa        MFAChallengeCreator
 	bcryptCost int
 }
 
 func NewAuthService(users UserRepository, orgs OrganizationCreator, tokens TokenService, bcryptCost int) *AuthService {
 	return &AuthService{users: users, orgs: orgs, tokens: tokens, bcryptCost: bcryptCost}
+}
+
+func (s *AuthService) SetMFA(mfa MFAChallengeCreator) {
+	s.mfa = mfa
 }
 
 func (s *AuthService) Register(ctx context.Context, cmd RegisterCommand) (*TokenPair, error) {
@@ -100,7 +116,7 @@ func (s *AuthService) Register(ctx context.Context, cmd RegisterCommand) (*Token
 	return s.tokens.GeneratePair(u)
 }
 
-func (s *AuthService) Login(ctx context.Context, cmd LoginCommand) (*TokenPair, error) {
+func (s *AuthService) Login(ctx context.Context, cmd LoginCommand) (*LoginResult, error) {
 	email := cmd.Email
 	if email == "admin" {
 		email = "admin@myrent.local"
@@ -112,11 +128,26 @@ func (s *AuthService) Login(ctx context.Context, cmd LoginCommand) (*TokenPair, 
 	if !u.Active {
 		return nil, ErrUserInactive
 	}
+	if !u.EmailVerified {
+		return nil, ErrEmailNotVerified
+	}
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(cmd.Password)); err != nil {
 		return nil, ErrInvalidCredentials
 	}
-	_ = ctx
-	return s.tokens.GeneratePair(u)
+
+	if u.MFAEnabled && s.mfa != nil {
+		mfaToken, err := s.mfa.CreateLoginChallenge(u.ID, u.Email)
+		if err != nil {
+			return nil, err
+		}
+		return &LoginResult{MFARequired: true, MFAToken: mfaToken}, nil
+	}
+
+	tokens, err := s.tokens.GeneratePair(u)
+	if err != nil {
+		return nil, err
+	}
+	return &LoginResult{Tokens: tokens}, nil
 }
 
 func (s *AuthService) Me(ctx context.Context, userID string) (*domain.User, error) {

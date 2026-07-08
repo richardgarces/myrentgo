@@ -8,6 +8,7 @@ import { setOnUnauthorized } from '@/lib/api'
 import { useAuthStore, applyTheme, useThemeStore } from '@/stores'
 
 const LoginPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })))
+const VerifyEmailPage = lazy(() => import('@/pages/VerifyEmailPage').then((m) => ({ default: m.VerifyEmailPage })))
 const DashboardPage = lazy(() => import('@/pages/DashboardPage').then((m) => ({ default: m.DashboardPage })))
 const PropertiesPage = lazy(() => import('@/pages/PropertiesPage').then((m) => ({ default: m.PropertiesPage })))
 const LeasesPage = lazy(() => import('@/pages/LeasesPage').then((m) => ({ default: m.LeasesPage })))
@@ -22,6 +23,7 @@ const MaintenancePage = lazy(() => import('@/pages/MaintenancePage').then((m) =>
 const TicketsPage = lazy(() => import('@/pages/TicketsPage').then((m) => ({ default: m.TicketsPage })))
 const NotificationsPage = lazy(() => import('@/pages/NotificationsPage').then((m) => ({ default: m.NotificationsPage })))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
+const SystemMonitoringPage = lazy(() => import('@/pages/SystemMonitoringPage').then((m) => ({ default: m.SystemMonitoringPage })))
 const ExportPage = lazy(() => import('@/pages/ExportPage').then((m) => ({ default: m.ExportPage })))
 
 function PageLoader({ children }: { children: React.ReactNode }) {
@@ -83,6 +85,14 @@ export default function App() {
             }
           />
           <Route
+            path="/verify-email"
+            element={
+              <PageLoader>
+                <VerifyEmailPage />
+              </PageLoader>
+            }
+          />
+          <Route
             element={
               <ProtectedRoute>
                 <AppLayout />
@@ -91,6 +101,7 @@ export default function App() {
           >
             <Route index element={<PageLoader><DashboardPage /></PageLoader>} />
             <Route path="properties" element={<PageLoader><PropertiesPage /></PageLoader>} />
+            <Route path="properties/completeness" element={<Navigate to="/properties?vista=completitud" replace />} />
             <Route path="leases" element={<PageLoader><LeasesPage /></PageLoader>} />
             <Route path="tenants" element={<PageLoader><TenantsPage /></PageLoader>} />
             <Route path="payments" element={<PageLoader><PaymentsPage /></PageLoader>} />
@@ -105,6 +116,7 @@ export default function App() {
             <Route path="email-notifications" element={<Navigate to="/notifications?tab=destinatarios" replace />} />
             <Route path="export" element={<PageLoader><ExportPage /></PageLoader>} />
             <Route path="settings" element={<PageLoader><SettingsPage /></PageLoader>} />
+            <Route path="settings/system" element={<PageLoader><SystemMonitoringPage /></PageLoader>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

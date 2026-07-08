@@ -50,6 +50,50 @@ func (r *UserRepo) Update(ctx context.Context, u *domainuser.User) error {
 	return err
 }
 
+func (r *UserRepo) ListByOrganization(ctx context.Context, orgID string, page, limit int) ([]domainuser.User, int64, error) {
+	query := bson.M{"organizations.organization_id": orgID}
+	total, err := r.col.CountDocuments(ctx, query)
+	if err != nil {
+		return nil, 0, err
+	}
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 20
+	}
+	skip := int64((page - 1) * limit)
+	opts := options.Find().
+		SetSkip(skip).
+		SetLimit(int64(limit)).
+		SetSort(bson.D{{Key: "created_at", Value: -1}})
+	cursor, err := r.col.Find(ctx, query, opts)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer cursor.Close(ctx)
+	var items []domainuser.User
+	if err := cursor.All(ctx, &items); err != nil {
+		return nil, 0, err
+	}
+	if items == nil {
+		items = []domainuser.User{}
+	}
+	return items, total, nil
+}
+
+func (r *UserRepo) CountOwnersInOrg(ctx context.Context, orgID string) (int64, error) {
+	return r.col.CountDocuments(ctx, bson.M{
+		"organizations": bson.M{
+			"$elemMatch": bson.M{
+				"organization_id": orgID,
+				"role":            string(domainuser.RoleOwner),
+			},
+		},
+		"active": true,
+	})
+}
+
 type OrgRepo struct {
 	col *mongo.Collection
 }
@@ -150,6 +194,58 @@ func (r *PropertyRepo) List(ctx context.Context, orgID string, filter apppropert
 		SetSort(bson.D{{Key: "created_at", Value: -1}})
 
 	cursor, err := r.col.Find(ctx, query, opts)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer cursor.Close(ctx)
+
+	var items []domainprop.Property
+	if err := cursor.All(ctx, &items); err != nil {
+		return nil, 0, err
+	}
+	if items == nil {
+		items = []domainprop.Property{}
+	}
+	for i := range items {
+		items[i].Financials.NormalizeMortgageUF()
+	}
+	return items, total, nil
+}
+
+func mortgageCreditFilter(orgID string) bson.M {
+	return bson.M{
+		"organization_id": orgID,
+		"$or": bson.A{
+			bson.M{"financials.monthly_mortgage_uf": bson.M{"$gt": 0}},
+			bson.M{"financials.monthly_mortgage.amount": bson.M{"$gt": 0}},
+			bson.M{"financials.original_loan_uf": bson.M{"$gt": 0}},
+			bson.M{
+				"$and": bson.A{
+					bson.M{"financials.debt_uf": bson.M{"$gt": 0}},
+					bson.M{"financials.bank_name": bson.M{"$gt": ""}},
+				},
+			},
+		},
+	}
+}
+
+func (r *PropertyRepo) ListMortgageCreditPaginated(ctx context.Context, orgID string, page, limit int) ([]domainprop.Property, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	query := mortgageCreditFilter(orgID)
+	total, err := r.col.CountDocuments(ctx, query)
+	if err != nil {
+		return nil, 0, err
+	}
+	skip := int64((page - 1) * limit)
+	cursor, err := r.col.Find(ctx, query, options.Find().
+		SetSort(bson.D{{Key: "name", Value: 1}}).
+		SetSkip(skip).
+		SetLimit(int64(limit)))
 	if err != nil {
 		return nil, 0, err
 	}

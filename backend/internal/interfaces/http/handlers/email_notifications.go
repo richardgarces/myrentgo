@@ -3,11 +3,13 @@ package handlers
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/richard/my-rent-go/internal/application/emailnotify"
 	domainer "github.com/richard/my-rent-go/internal/domain/emailrecipient"
 	domainsettings "github.com/richard/my-rent-go/internal/domain/notificationsettings"
+	"github.com/richard/my-rent-go/internal/infrastructure/metrics"
 	"github.com/richard/my-rent-go/internal/infrastructure/mongodb"
 	"github.com/richard/my-rent-go/internal/interfaces/http/middleware"
 )
@@ -33,9 +35,10 @@ func (h *EmailNotificationsHandler) ListRecipients(c *gin.Context) {
 }
 
 type createEmailRecipientReq struct {
-	Email             string   `json:"email" binding:"required"`
-	Name              string   `json:"name" binding:"required"`
+	Email             string   `json:"email"`
+	Name              string   `json:"name"`
 	Label             string   `json:"label"`
+	PropertyID        string   `json:"property_id"`
 	Enabled           *bool    `json:"enabled"`
 	NotificationTypes []string `json:"notification_types"`
 }
@@ -52,11 +55,27 @@ func (h *EmailNotificationsHandler) CreateRecipient(c *gin.Context) {
 		return
 	}
 	orgID := middleware.GetOrgID(c)
+	ctx := c.Request.Context()
+
+	propertyID := strings.TrimSpace(req.PropertyID)
+	if propertyID == "" {
+		if strings.TrimSpace(req.Email) == "" || strings.TrimSpace(req.Name) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "nombre y correo son obligatorios para destinatarios internos"})
+			return
+		}
+	}
+
 	rec := domainer.NewEmailRecipient(orgID, strings.TrimSpace(req.Email), strings.TrimSpace(req.Name), strings.TrimSpace(req.Label), types)
 	if req.Enabled != nil {
 		rec.Enabled = *req.Enabled
 	}
-	if err := h.recipients.Create(c.Request.Context(), rec); err != nil {
+	if propertyID != "" {
+		if err := h.svc.ApplyPropertyLink(ctx, orgID, rec, propertyID, ""); err != nil {
+			c.JSON(recipientValidationStatus(err), gin.H{"error": err.Error()})
+			return
+		}
+	}
+	if err := h.recipients.Create(ctx, rec); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -67,6 +86,7 @@ type updateEmailRecipientReq struct {
 	Email             *string  `json:"email"`
 	Name              *string  `json:"name"`
 	Label             *string  `json:"label"`
+	PropertyID        *string  `json:"property_id"`
 	Enabled           *bool    `json:"enabled"`
 	NotificationTypes []string `json:"notification_types"`
 }
@@ -78,8 +98,9 @@ func (h *EmailNotificationsHandler) UpdateRecipient(c *gin.Context) {
 		return
 	}
 	orgID := middleware.GetOrgID(c)
+	ctx := c.Request.Context()
 	id := c.Param("id")
-	rec, err := h.recipients.FindByID(c.Request.Context(), orgID, id)
+	rec, err := h.recipients.FindByID(ctx, orgID, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -88,10 +109,27 @@ func (h *EmailNotificationsHandler) UpdateRecipient(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "recipient not found"})
 		return
 	}
-	if req.Email != nil {
+
+	if req.PropertyID != nil {
+		propertyID := strings.TrimSpace(*req.PropertyID)
+		if propertyID == "" {
+			rec.PropertyID = ""
+			rec.TenantID = ""
+		} else if err := h.svc.ApplyPropertyLink(ctx, orgID, rec, propertyID, rec.ID); err != nil {
+			c.JSON(recipientValidationStatus(err), gin.H{"error": err.Error()})
+			return
+		}
+	} else if rec.IsPropertyLinked() {
+		if err := h.svc.RefreshPropertyLinkedSnapshot(ctx, orgID, rec); err != nil {
+			c.JSON(recipientValidationStatus(err), gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	if req.Email != nil && !rec.IsPropertyLinked() {
 		rec.Email = strings.TrimSpace(*req.Email)
 	}
-	if req.Name != nil {
+	if req.Name != nil && !rec.IsPropertyLinked() {
 		rec.Name = strings.TrimSpace(*req.Name)
 	}
 	if req.Label != nil {
@@ -108,11 +146,44 @@ func (h *EmailNotificationsHandler) UpdateRecipient(c *gin.Context) {
 		}
 		rec.NotificationTypes = types
 	}
-	if err := h.recipients.Update(c.Request.Context(), rec); err != nil {
+
+	if !rec.IsPropertyLinked() {
+		if strings.TrimSpace(rec.Email) == "" || strings.TrimSpace(rec.Name) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "nombre y correo son obligatorios para destinatarios internos"})
+			return
+		}
+	}
+
+	if err := h.recipients.Update(ctx, rec); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, rec)
+}
+
+func recipientValidationStatus(err error) int {
+	switch err {
+	case emailnotify.ErrPropertyNoActiveLease,
+		emailnotify.ErrTenantNoEmail,
+		emailnotify.ErrPropertyAlreadyLinked,
+		emailnotify.ErrPropertyNotRent:
+		return http.StatusBadRequest
+	default:
+		return http.StatusBadRequest
+	}
+}
+
+func (h *EmailNotificationsHandler) SyncRecipientsFromLeases(c *gin.Context) {
+	orgID := middleware.GetOrgID(c)
+	result, err := h.svc.SyncRecipientsFromLeases(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": "destinatarios sincronizados desde arriendos",
+		"result":  result,
+	})
 }
 
 func (h *EmailNotificationsHandler) DeleteRecipient(c *gin.Context) {
@@ -186,6 +257,23 @@ func (h *EmailNotificationsHandler) SendEmailNotifications(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "notificaciones enviadas", "result": result})
 }
 
+func (h *EmailNotificationsHandler) SendSingleNotification(c *gin.Context) {
+	orgID := middleware.GetOrgID(c)
+	id := c.Param("id")
+	result, err := h.svc.SendNotification(c.Request.Context(), orgID, id)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		} else if strings.Contains(err.Error(), "channel is not email") || strings.Contains(err.Error(), "cannot be sent") {
+			status = http.StatusBadRequest
+		}
+		c.JSON(status, gin.H{"error": err.Error(), "result": result})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "notificación enviada", "result": result})
+}
+
 func parseNotificationTypes(types []string) ([]domainer.NotificationType, error) {
 	if types == nil {
 		return []domainer.NotificationType{}, nil
@@ -221,7 +309,11 @@ func (h *EmailNotificationsHandler) ListNotificationTypes(c *gin.Context) {
 		domainer.TypeMaintenanceDue:  "Recordatorio de mantención",
 	}
 	for _, t := range domainer.AllNotificationTypes {
-		types = append(types, gin.H{"id": t, "label": labels[t]})
+		label := labels[t]
+		if label == "" {
+			label = emailnotify.NotificationTypeLabel(string(t))
+		}
+		types = append(types, gin.H{"id": t, "label": label})
 	}
 	c.JSON(http.StatusOK, gin.H{"data": types})
 }
@@ -276,7 +368,9 @@ func (h *EmailNotificationsHandler) UpdateAutomationSettings(c *gin.Context) {
 
 func (h *EmailNotificationsHandler) RunEmailScheduler(c *gin.Context) {
 	orgID := middleware.GetOrgID(c)
+	start := time.Now()
 	result, err := h.svc.RunScheduler(c.Request.Context(), orgID)
+	metrics.RecordSchedulerRun("email_manual", err == nil, time.Since(start).Seconds())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "result": result})
 		return

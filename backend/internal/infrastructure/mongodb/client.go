@@ -145,6 +145,16 @@ func (c *Client) EnsureIndexes(ctx context.Context) error {
 			{Keys: bson.D{{Key: "user_id", Value: 1}}},
 			{Keys: bson.D{{Key: "expires_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)},
 		},
+		"password_reset_tokens": {
+			{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "used", Value: 1}}},
+			{Keys: bson.D{{Key: "email", Value: 1}}},
+			{Keys: bson.D{{Key: "expires_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)},
+		},
+		"email_verification_tokens": {
+			{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "used", Value: 1}}},
+			{Keys: bson.D{{Key: "email", Value: 1}}},
+			{Keys: bson.D{{Key: "expires_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)},
+		},
 	}
 
 	for coll, models := range indexes {
@@ -161,6 +171,12 @@ func (c *Client) EnsureIndexes(ctx context.Context) error {
 		bson.M{"$set": bson.M{"active": true}},
 	); err != nil {
 		return fmt.Errorf("migrate documents active field: %w", err)
+	}
+	if _, err := c.Collection("users").UpdateMany(ctx,
+		bson.M{"email_verified": bson.M{"$exists": false}},
+		bson.M{"$set": bson.M{"email_verified": true}},
+	); err != nil {
+		return fmt.Errorf("migrate users email_verified field: %w", err)
 	}
 	return nil
 }

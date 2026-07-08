@@ -95,6 +95,19 @@ func (r *LeaseRepo) ExistsByTenantID(ctx context.Context, orgID, tenantID string
 	return count > 0, nil
 }
 
+func (r *LeaseRepo) FindActiveByPropertyID(ctx context.Context, orgID, propertyID string) (*domainlease.Lease, error) {
+	var l domainlease.Lease
+	err := r.col.FindOne(ctx, bson.M{
+		"organization_id": orgID,
+		"property_id":     propertyID,
+		"status":          domainlease.StatusActive,
+	}).Decode(&l)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, nil
+	}
+	return &l, err
+}
+
 func (r *LeaseRepo) HasActiveLeaseForProperty(ctx context.Context, orgID, propertyID, excludeLeaseID string) (bool, error) {
 	filter := bson.M{
 		"organization_id": orgID,
@@ -171,6 +184,53 @@ func (r *LeaseRepo) Upcoming(ctx context.Context, orgID string, withinDays int) 
 	defer cursor.Close(ctx)
 	var items []domainlease.Lease
 	return items, cursor.All(ctx, &items)
+}
+
+func (r *LeaseRepo) ListActiveWithEndDateOn(ctx context.Context, orgID string, date time.Time) ([]domainlease.Lease, error) {
+	dayStart := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
+	dayEnd := dayStart.Add(24 * time.Hour)
+	cursor, err := r.col.Find(ctx, bson.M{
+		"organization_id": orgID,
+		"status":          domainlease.StatusActive,
+		"end_date":        bson.M{"$gte": dayStart, "$lt": dayEnd},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var items []domainlease.Lease
+	if err := cursor.All(ctx, &items); err != nil {
+		return nil, err
+	}
+	if items == nil {
+		items = []domainlease.Lease{}
+	}
+	return items, nil
+}
+
+func (r *LeaseRepo) ListExpiredForAutoRenew(ctx context.Context, orgID string, before time.Time) ([]domainlease.Lease, error) {
+	dayStart := time.Date(before.Year(), before.Month(), before.Day(), 0, 0, 0, 0, time.UTC)
+	cursor, err := r.col.Find(ctx, bson.M{
+		"organization_id": orgID,
+		"status":          domainlease.StatusActive,
+		"$or": []bson.M{
+			{"auto_renew": true},
+			{"auto_renew": bson.M{"$exists": false}},
+		},
+		"end_date": bson.M{"$exists": true, "$ne": nil, "$lt": dayStart},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var items []domainlease.Lease
+	if err := cursor.All(ctx, &items); err != nil {
+		return nil, err
+	}
+	if items == nil {
+		items = []domainlease.Lease{}
+	}
+	return items, nil
 }
 
 type PaymentRepo struct{ col *mongo.Collection }
@@ -500,6 +560,25 @@ func (r *ContactRepo) List(ctx context.Context, orgID string, page, limit int, c
 	return listByOrg[domaincrm.Contact](ctx, r.col, orgID, ListParams{Page: page, Limit: limit, Filter: f})
 }
 
+func (r *ContactRepo) FindByID(ctx context.Context, orgID, id string) (*domaincrm.Contact, error) {
+	var c domaincrm.Contact
+	err := r.col.FindOne(ctx, bson.M{"_id": id, "organization_id": orgID}).Decode(&c)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, nil
+	}
+	return &c, err
+}
+
+func (r *ContactRepo) Update(ctx context.Context, c *domaincrm.Contact) error {
+	c.Touch()
+	return replaceByOrg(ctx, r.col, c.OrganizationID, c.ID, c)
+}
+
+func (r *ContactRepo) Delete(ctx context.Context, orgID, id string) error {
+	_, err := r.col.DeleteOne(ctx, bson.M{"_id": id, "organization_id": orgID})
+	return err
+}
+
 type MaintenanceRepo struct{ col *mongo.Collection }
 
 func NewMaintenanceRepo(db *Client) *MaintenanceRepo {
@@ -523,6 +602,16 @@ func (r *MaintenanceRepo) FindByID(ctx context.Context, orgID, id string) (*doma
 		return nil, nil
 	}
 	return &m, err
+}
+
+func (r *MaintenanceRepo) Update(ctx context.Context, m *domainmaint.Maintenance) error {
+	m.Touch()
+	return replaceByOrg(ctx, r.col, m.OrganizationID, m.ID, m)
+}
+
+func (r *MaintenanceRepo) Delete(ctx context.Context, orgID, id string) error {
+	_, err := r.col.DeleteOne(ctx, bson.M{"_id": id, "organization_id": orgID})
+	return err
 }
 
 func (r *MaintenanceRepo) ListForScheduledDate(ctx context.Context, orgID string, scheduledDate time.Time, statuses []domainmaint.Status) ([]domainmaint.Maintenance, error) {
@@ -779,6 +868,21 @@ func (r *NotificationRepo) ExistsForMaintenanceTrigger(ctx context.Context, orgI
 		"metadata.maintenance_id":    maintenanceID,
 		"metadata.trigger_day":       triggerDay,
 		"status":                     bson.M{"$in": []domainnotif.Status{domainnotif.StatusPending, domainnotif.StatusSent}},
+	})
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (r *NotificationRepo) ExistsForLeaseEndDateTrigger(ctx context.Context, orgID, leaseID, endDate, triggerDay string) (bool, error) {
+	count, err := r.col.CountDocuments(ctx, bson.M{
+		"organization_id":       orgID,
+		"type":                  domainnotif.TypeLeaseExpiring,
+		"metadata.lease_id":     leaseID,
+		"metadata.trigger_day":  triggerDay,
+		"metadata.end_date":     endDate,
+		"status":                bson.M{"$in": []domainnotif.Status{domainnotif.StatusPending, domainnotif.StatusSent}},
 	})
 	if err != nil {
 		return false, err

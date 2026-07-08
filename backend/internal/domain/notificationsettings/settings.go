@@ -15,6 +15,7 @@ const (
 	RuleMaintenanceReminder7     = "maintenance_reminder_7"
 	RuleMaintenanceReminder1     = "maintenance_reminder_1"
 	RuleMaintenanceDayOf         = "maintenance_day_of"
+	RuleLeaseExpiringReminder    = "lease_expiring_reminder"
 )
 
 // AutomationRule defines when an automatic rent payment email is sent relative to due_date.
@@ -79,6 +80,13 @@ func DefaultRules() []AutomationRule {
 			DaysOffset: 0,
 			Enabled:    true,
 		},
+		{
+			ID:         RuleLeaseExpiringReminder,
+			Type:       domainnotif.TypeLeaseExpiring,
+			Label:      "Aviso 30 días antes del fin de contrato",
+			DaysOffset: -30,
+			Enabled:    true,
+		},
 	}
 }
 
@@ -93,6 +101,10 @@ func IsPaymentRule(rule AutomationRule) bool {
 	default:
 		return false
 	}
+}
+
+func IsLeaseRule(rule AutomationRule) bool {
+	return rule.Type == domainnotif.TypeLeaseExpiring
 }
 
 func NewSettings(orgID string) *Settings {

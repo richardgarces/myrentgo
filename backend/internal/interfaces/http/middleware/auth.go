@@ -70,6 +70,8 @@ func SecurityHeaders(csp string) gin.HandlerFunc {
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Header("Content-Security-Policy", csp)
 		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		c.Header("Cross-Origin-Opener-Policy", "same-origin")
+		c.Header("Cross-Origin-Resource-Policy", "same-origin")
 		c.Next()
 	}
 }
@@ -127,6 +129,76 @@ func (rl *RateLimiter) cleanup() {
 		rl.mu.Lock()
 		for ip, v := range rl.visitors {
 			if time.Since(v.lastSeen) > 3*time.Minute {
+				delete(rl.visitors, ip)
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
+
+type windowVisitor struct {
+	count    int
+	windowAt time.Time
+}
+
+// FixedWindowRateLimiter caps requests per IP within a sliding time window (e.g. login brute-force).
+type FixedWindowRateLimiter struct {
+	mu       sync.Mutex
+	visitors map[string]*windowVisitor
+	limit    int
+	window   time.Duration
+}
+
+func NewFixedWindowRateLimiter(limit int, window time.Duration) *FixedWindowRateLimiter {
+	if limit < 1 {
+		limit = 1
+	}
+	if window <= 0 {
+		window = time.Minute
+	}
+	rl := &FixedWindowRateLimiter{
+		visitors: make(map[string]*windowVisitor),
+		limit:    limit,
+		window:   window,
+	}
+	go rl.cleanup()
+	return rl
+}
+
+func (rl *FixedWindowRateLimiter) Middleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
+		if !rl.allow(ip) {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded"})
+			return
+		}
+		c.Next()
+	}
+}
+
+func (rl *FixedWindowRateLimiter) allow(ip string) bool {
+	now := time.Now()
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	v, exists := rl.visitors[ip]
+	if !exists || now.Sub(v.windowAt) >= rl.window {
+		rl.visitors[ip] = &windowVisitor{count: 1, windowAt: now}
+		return true
+	}
+	if v.count >= rl.limit {
+		return false
+	}
+	v.count++
+	return true
+}
+
+func (rl *FixedWindowRateLimiter) cleanup() {
+	for {
+		time.Sleep(time.Minute)
+		rl.mu.Lock()
+		now := time.Now()
+		for ip, v := range rl.visitors {
+			if now.Sub(v.windowAt) > rl.window*2 {
 				delete(rl.visitors, ip)
 			}
 		}

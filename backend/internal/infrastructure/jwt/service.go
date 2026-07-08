@@ -99,3 +99,55 @@ func (s *Service) Refresh(refreshToken string) (*auth.TokenPair, error) {
 	_ = refreshToken
 	return nil, errors.New("not implemented")
 }
+
+const mfaTokenTTL = 5 * time.Minute
+
+type mfaClaims struct {
+	UserID string `json:"uid"`
+	Email  string `json:"email"`
+	Type   string `json:"typ"`
+	jwt.RegisteredClaims
+}
+
+func (s *Service) GenerateMFAToken(userID, email string) (string, error) {
+	now := time.Now().UTC()
+	claims := mfaClaims{
+		UserID: userID,
+		Email:  email,
+		Type:   "mfa",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(now.Add(mfaTokenTTL)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			Issuer:    s.issuer,
+			Subject:   userID,
+			ID:        uuid.New().String(),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(s.secret)
+}
+
+func (s *Service) ValidateMFAToken(tokenStr string) (userID, email string, err error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &mfaClaims{}, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("unexpected signing method")
+		}
+		return s.secret, nil
+	})
+	if err != nil {
+		return "", "", err
+	}
+	claims, ok := token.Claims.(*mfaClaims)
+	if !ok || !token.Valid || claims.Type != "mfa" {
+		return "", "", errors.New("invalid mfa token")
+	}
+	return claims.UserID, claims.Email, nil
+}
+
+func (s *Service) GeneratePairStrings(u *domainuser.User) (accessToken, refreshToken string, expiresIn int64, err error) {
+	pair, err := s.GeneratePair(u)
+	if err != nil {
+		return "", "", 0, err
+	}
+	return pair.AccessToken, pair.RefreshToken, pair.ExpiresIn, nil
+}

@@ -118,6 +118,7 @@ type Financials struct {
 	CommonExpenses      shared.Money `json:"common_expenses" bson:"common_expenses"`
 	ExpectedRent        shared.Money `json:"expected_rent" bson:"expected_rent"`
 	ValueUF             float64      `json:"value_uf,omitempty" bson:"value_uf,omitempty"`
+	CommercialValueUF   float64      `json:"commercial_value_uf,omitempty" bson:"commercial_value_uf,omitempty"`
 	DebtUF              float64      `json:"debt_uf,omitempty" bson:"debt_uf,omitempty"`
 	OriginalLoanUF      float64      `json:"original_loan_uf,omitempty" bson:"original_loan_uf,omitempty"`
 	MonthlyMortgageUF   float64      `json:"monthly_mortgage_uf,omitempty" bson:"monthly_mortgage_uf,omitempty"`

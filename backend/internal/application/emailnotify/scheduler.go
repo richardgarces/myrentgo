@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	domainer "github.com/richard/my-rent-go/internal/domain/emailrecipient"
 	domainnotif "github.com/richard/my-rent-go/internal/domain/notification"
 	domainsettings "github.com/richard/my-rent-go/internal/domain/notificationsettings"
 	domainpay "github.com/richard/my-rent-go/internal/domain/payment"
 	"github.com/richard/my-rent-go/internal/domain/shared"
 	"github.com/richard/my-rent-go/internal/infrastructure/email"
+	"github.com/richard/my-rent-go/internal/infrastructure/metrics"
 	"github.com/richard/my-rent-go/internal/infrastructure/mongodb"
 )
 type SchedulerDetail struct {
@@ -20,6 +20,7 @@ type SchedulerDetail struct {
 	Type             string `json:"type"`
 	PaymentID        string `json:"payment_id,omitempty"`
 	MaintenanceID    string `json:"maintenance_id,omitempty"`
+	LeaseID          string `json:"lease_id,omitempty"`
 	MaintenanceTitle string `json:"maintenance_title,omitempty"`
 	TenantName       string `json:"tenant_name,omitempty"`
 	PropertyName     string `json:"property_name,omitempty"`
@@ -29,6 +30,7 @@ type SchedulerDetail struct {
 type SchedulerResult struct {
 	CheckedPayments    int               `json:"checked_payments"`
 	CheckedMaintenance int               `json:"checked_maintenance"`
+	CheckedLeases      int               `json:"checked_leases"`
 	Created            int               `json:"created"`
 	Sent               int               `json:"sent"`
 	Skipped            int               `json:"skipped"`
@@ -75,6 +77,7 @@ func mergeAutomationRules(current, updates []domainsettings.AutomationRule) []do
 		domainsettings.RuleMaintenanceReminder7,
 		domainsettings.RuleMaintenanceReminder1,
 		domainsettings.RuleMaintenanceDayOf,
+		domainsettings.RuleLeaseExpiringReminder,
 	} {
 		if r, ok := byID[id]; ok {
 			out = append(out, r)
@@ -115,6 +118,12 @@ func (s *Service) RunScheduler(ctx context.Context, orgID string) (*SchedulerRes
 			}
 			continue
 		}
+		if domainsettings.IsLeaseRule(rule) {
+			if err := s.processLeaseRules(ctx, orgID, rule, triggerDay, result); err != nil {
+				return result, err
+			}
+			continue
+		}
 		if !domainsettings.IsPaymentRule(rule) {
 			continue
 		}
@@ -137,8 +146,8 @@ func (s *Service) RunScheduler(ctx context.Context, orgID string) (*SchedulerRes
 	now := time.Now().UTC()
 	settings.LastRunAt = &now
 	settings.LastRunSummary = fmt.Sprintf(
-		"pagos=%d mantenciones=%d creados=%d enviados=%d omitidos=%d fallidos=%d",
-		result.CheckedPayments, result.CheckedMaintenance, result.Created, result.Sent, result.Skipped, result.Failed,
+		"pagos=%d mantenciones=%d contratos=%d creados=%d enviados=%d omitidos=%d fallidos=%d",
+		result.CheckedPayments, result.CheckedMaintenance, result.CheckedLeases, result.Created, result.Sent, result.Skipped, result.Failed,
 	)
 	_ = s.settings.Update(ctx, settings)
 
@@ -265,24 +274,12 @@ func (s *Service) buildRentPaymentContext(ctx context.Context, orgID string, p *
 }
 
 func (s *Service) sendRentNotification(ctx context.Context, orgID string, n *domainnotif.Notification, notifType domainnotif.Type, ctxData email.RentPaymentContext) (*SendResult, error) {
-	recs, err := s.recipients.ListEnabledForType(ctx, orgID, domainerType(notifType))
+	emails, err := s.resolveNotificationRecipients(ctx, orgID, n)
 	if err != nil {
-		return nil, err
-	}
-	if len(recs) == 0 {
-		n.Status = domainnotif.StatusFailed
+		errMsg := err.Error()
+		n.MarkFailed(errMsg)
 		_ = s.notifications.Update(ctx, n)
-		return &SendResult{FailedCount: 1, Errors: []string{fmt.Sprintf("no enabled recipients for type %s", notifType)}}, nil
-	}
-
-	emails := make([]string, 0, len(recs))
-	for _, r := range recs {
-		if addr := strings.TrimSpace(r.Email); addr != "" {
-			emails = append(emails, addr)
-		}
-	}
-	if len(emails) == 0 {
-		return nil, fmt.Errorf("no valid email addresses configured")
+		return &SendResult{FailedCount: 1, Errors: []string{errMsg}}, nil
 	}
 
 	subject, htmlBody, textBody := email.RenderRentPaymentNotification(string(notifType), n.Title, n.Message, ctxData)
@@ -295,22 +292,16 @@ func (s *Service) sendRentNotification(ctx context.Context, orgID string, n *dom
 
 	now := time.Now().UTC()
 	if sendErr != nil {
-		n.Status = domainnotif.StatusFailed
-		n.SentAt = nil
+		n.MarkFailed(sendErr.Error())
 		_ = s.notifications.Update(ctx, n)
 		return &SendResult{FailedCount: 1, Errors: []string{sendErr.Error()}}, nil
 	}
 
-	n.Status = domainnotif.StatusSent
-	n.SentAt = &now
+	n.MarkSent(now)
 	if err := s.notifications.Update(ctx, n); err != nil {
 		return &SendResult{SentCount: len(emails), Recipients: emails}, err
 	}
 	return &SendResult{SentCount: len(emails), Recipients: emails}, nil
-}
-
-func domainerType(t domainnotif.Type) domainer.NotificationType {
-	return domainer.NotificationType(t)
 }
 
 func rentNotificationContent(notifType domainnotif.Type, ctx email.RentPaymentContext) (string, string) {
@@ -365,16 +356,20 @@ func truncateDate(t time.Time) time.Time {
 // StartBackgroundScheduler runs the email scheduler on startup and on a fixed interval for all active orgs.
 func StartBackgroundScheduler(ctx context.Context, svc *Service, orgs *mongodb.OrgRepo, interval time.Duration) {
 	run := func() {
+		start := time.Now()
 		runCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		orgIDs, err := orgs.ListActiveIDs(runCtx)
 		if err != nil {
+			metrics.RecordSchedulerRun("email", false, time.Since(start).Seconds())
 			slog.Error("email scheduler: list organizations", "error", err)
 			return
 		}
+		failed := false
 		for _, orgID := range orgIDs {
 			result, err := svc.RunScheduler(runCtx, orgID)
 			if err != nil {
+				failed = true
 				slog.Error("email scheduler: run failed", "org_id", orgID, "error", err)
 				continue
 			}
@@ -388,6 +383,7 @@ func StartBackgroundScheduler(ctx context.Context, svc *Service, orgs *mongodb.O
 				)
 			}
 		}
+		metrics.RecordSchedulerRun("email", !failed, time.Since(start).Seconds())
 	}
 
 	go func() {

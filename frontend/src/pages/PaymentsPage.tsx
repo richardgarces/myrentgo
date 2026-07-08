@@ -2,12 +2,16 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { CalendarDays, Plus } from 'lucide-react'
+import { DataCardGrid, DataListItem, DataListShell } from '@/components/DataListViews'
+import { ViewModeToggle } from '@/components/ViewModeToggle'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FormDialog, FormField, FormSelect } from '@/components/ui/form-dialog'
 import { Input } from '@/components/ui/input'
 import { EmptyState, LoadingSkeleton, PageHeader, StatusBadge } from '@/components/ui/page'
+import { useViewMode } from '@/hooks/useViewMode'
 import { api, type Lease, type Payment } from '@/lib/api'
+import { invalidateAfterMutation } from '@/lib/query-options'
 import { formatCurrency, formatDate } from '@/lib/utils'
 
 const emptyForm = { type: 'rent', amount: '', due_date: '', property_id: '', lease_id: '', tenant_id: '', notes: '' }
@@ -194,13 +198,13 @@ export function PaymentsPage() {
 
   const markPaid = useMutation({
     mutationFn: (id: string) => api.markPaymentPaid(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['payments'] }),
+    onSuccess: () => invalidateAfterMutation(qc, 'payments'),
   })
 
   const generatePending = useMutation({
     mutationFn: () => api.generatePendingRentPayments(generateMonth, false),
     onSuccess: (result) => {
-      qc.invalidateQueries({ queryKey: ['payments'] })
+      invalidateAfterMutation(qc, 'payments')
       qc.invalidateQueries({ queryKey: ['payments', 'generate-status'] })
       setGenerateOpen(false)
       setPreview(null)
@@ -225,7 +229,7 @@ export function PaymentsPage() {
       ...(form.type === 'deposit' && form.notes.trim() ? { notes: form.notes.trim() } : {}),
     }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['payments'] })
+      invalidateAfterMutation(qc, 'payments')
       setForm(emptyForm)
       setOpen(false)
     },
@@ -240,6 +244,14 @@ export function PaymentsPage() {
       tenant_id: lease?.tenant_id ?? '',
     })
   }
+
+  const [viewMode, setViewMode] = useViewMode('payments', 'tabla')
+
+  const markPaidButton = (p: Payment) => (
+    (p.status === 'pending' || p.status === 'overdue') ? (
+      <Button size="sm" variant="outline" onClick={() => markPaid.mutate(p.id)}>Marcar pagado</Button>
+    ) : null
+  )
 
   if (isLoading && !data) return <LoadingSkeleton />
 
@@ -267,9 +279,56 @@ export function PaymentsPage() {
           </div>
         } />
       <Card>
-        <CardHeader><CardTitle className="text-base">Historial de pagos de arriendo</CardTitle></CardHeader>
-        <CardContent className="p-0">
-          {!rentPayments.length ? <EmptyState message="Sin pagos de arriendo registrados." /> : (
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
+          <CardTitle className="text-base">Historial de pagos de arriendo</CardTitle>
+          {rentPayments.length > 0 && (
+            <ViewModeToggle value={viewMode} onChange={setViewMode} />
+          )}
+        </CardHeader>
+        <CardContent className={viewMode === 'tabla' ? 'p-0' : undefined}>
+          {!rentPayments.length ? <EmptyState message="Sin pagos de arriendo registrados." /> : viewMode === 'tarjetas' ? (
+            <DataCardGrid>
+              {rentPayments.map((p) => (
+                <Card key={p.id}>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <CardTitle className="text-base">{formatPaymentDescription(p)}</CardTitle>
+                      <StatusBadge status={p.status} />
+                    </div>
+                    <p className="text-xs text-muted-foreground">{paymentTypeLabels[p.type] ?? p.type}</p>
+                  </CardHeader>
+                  <CardContent className="space-y-1 text-sm text-muted-foreground">
+                    <p>Arrendatario: <span className="text-foreground">{p.tenant_id ? tenantMap.get(p.tenant_id) ?? '—' : '—'}</span></p>
+                    <p>Monto: <span className="text-foreground font-medium">{formatCurrency(p.amount.amount, p.amount.currency)}</span></p>
+                    <p>Vence: <span className="text-foreground">{formatDate(p.due_date)}</span></p>
+                    <div className="pt-2">{markPaidButton(p)}</div>
+                  </CardContent>
+                </Card>
+              ))}
+            </DataCardGrid>
+          ) : viewMode === 'lista' ? (
+            <DataListShell>
+              {rentPayments.map((p) => (
+                <DataListItem key={p.id} className="justify-between">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium">{formatPaymentDescription(p)}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {paymentTypeLabels[p.type] ?? p.type}
+                      {' · '}
+                      {p.tenant_id ? tenantMap.get(p.tenant_id) ?? '—' : '—'}
+                      {' · '}
+                      {formatDate(p.due_date)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="font-medium">{formatCurrency(p.amount.amount, p.amount.currency)}</span>
+                    <StatusBadge status={p.status} />
+                    {markPaidButton(p)}
+                  </div>
+                </DataListItem>
+              ))}
+            </DataListShell>
+          ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -294,11 +353,7 @@ export function PaymentsPage() {
                         {formatCurrency(p.amount.amount, p.amount.currency)}
                       </td>
                       <td className="p-4">{formatDate(p.due_date)}</td>
-                      <td className="p-4">
-                        {(p.status === 'pending' || p.status === 'overdue') && (
-                          <Button size="sm" variant="outline" onClick={() => markPaid.mutate(p.id)}>Marcar pagado</Button>
-                        )}
-                      </td>
+                      <td className="p-4">{markPaidButton(p)}</td>
                     </tr>
                   ))}
                 </tbody>

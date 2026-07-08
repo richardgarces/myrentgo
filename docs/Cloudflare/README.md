@@ -178,5 +178,7 @@ Tras configurar `.env`, reinicia el backend y comprueba en **Configuración → 
 
 ## Documentos relacionados del proyecto
 
+- [PRODUCTION.md](../PRODUCTION.md) — índice de despliegue en producción
+- [DESPLIEGUE_PRODUCCION_SUBDOMINIO.md](../DESPLIEGUE_PRODUCCION_SUBDOMINIO.md) — guía paso a paso con subdominio (VPS + Docker)
 - [MANUAL_TECNICO.md](../MANUAL_TECNICO.md) — arquitectura con Cloudflare en el edge
 - [MANUAL_USUARIO.md](../MANUAL_USUARIO.md) — recordatorios automáticos por correo

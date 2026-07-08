@@ -96,7 +96,9 @@ func (h *Hub) Handle(c *gin.Context) {
 func (c *Client) readPump(h *Hub) {
 	defer func() {
 		h.Unregister(c.OrgID, c)
-		c.Conn.Close()
+		if err := c.Conn.Close(); err != nil {
+			slog.Debug("websocket close", "error", err)
+		}
 	}()
 	for {
 		if _, _, err := c.Conn.ReadMessage(); err != nil {
@@ -106,7 +108,11 @@ func (c *Client) readPump(h *Hub) {
 }
 
 func (c *Client) writePump() {
-	defer c.Conn.Close()
+	defer func() {
+		if err := c.Conn.Close(); err != nil {
+			slog.Debug("websocket close", "error", err)
+		}
+	}()
 	for msg := range c.Send {
 		if err := c.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 			break

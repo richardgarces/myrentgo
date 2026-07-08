@@ -2,12 +2,15 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Pencil, Plus, Trash2, UserMinus } from 'lucide-react'
+import { DataCardGrid, DataListItem, DataListShell } from '@/components/DataListViews'
+import { ViewModeToggle } from '@/components/ViewModeToggle'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FormDialog, FormField } from '@/components/ui/form-dialog'
 import { Input } from '@/components/ui/input'
 import { PinConfirmDialog } from '@/components/ui/pin-confirm-dialog'
 import { EmptyState, LoadingSkeleton, PageHeader } from '@/components/ui/page'
+import { useViewMode } from '@/hooks/useViewMode'
 import { api, type Tenant } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
@@ -179,6 +182,45 @@ export function TenantsPage() {
   const isSaving = create.isPending || update.isPending
   const mutationError = create.error || update.error || remove.error || deactivate.error
   const canDeactivate = editingTenant?.active !== false
+  const [viewMode, setViewMode] = useViewMode('tenants', 'tabla')
+  const tenants = data?.data ?? []
+
+  const tenantActions = (tenant: Tenant) => (
+    <div className="flex gap-1 shrink-0">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8"
+        onClick={() => openEdit(tenant)}
+        title="Editar arrendatario"
+      >
+        <Pencil className="h-4 w-4" />
+      </Button>
+      {tenant.active !== false && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={() => { setEditingId(tenant.id); setConfirmDeactivate(true) }}
+          title="Dar de baja"
+        >
+          <UserMinus className="h-4 w-4" />
+        </Button>
+      )}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8 text-destructive hover:text-destructive"
+        onClick={() => { setEditingId(tenant.id); setConfirmDelete(true) }}
+        title="Eliminar"
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    </div>
+  )
 
   if (isLoading && !data) return <LoadingSkeleton />
 
@@ -190,10 +232,57 @@ export function TenantsPage() {
         action={<Button onClick={openCreate}><Plus className="h-4 w-4" /> Agregar arrendatario</Button>}
       />
       <Card>
-        <CardHeader><CardTitle className="text-base">Arrendatarios</CardTitle></CardHeader>
-        <CardContent className="p-0">
-          {!data?.data.length ? (
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
+          <CardTitle className="text-base">Arrendatarios</CardTitle>
+          {tenants.length > 0 && (
+            <ViewModeToggle value={viewMode} onChange={setViewMode} />
+          )}
+        </CardHeader>
+        <CardContent className={viewMode === 'tabla' ? 'p-0' : undefined}>
+          {!tenants.length ? (
             <EmptyState message="Sin arrendatarios. Usa el botón Agregar arrendatario." />
+          ) : viewMode === 'tarjetas' ? (
+            <DataCardGrid>
+              {tenants.map((tenant) => (
+                <Card
+                  key={tenant.id}
+                  className={cn(!tenant.active && 'opacity-60')}
+                >
+                  <CardHeader className="pb-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <CardTitle className="text-base">
+                        {tenant.first_name} {tenant.last_name}
+                      </CardTitle>
+                      <TenantStatusBadge active={tenant.active !== false} />
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-2 text-sm text-muted-foreground">
+                    {tenant.contact?.email && <p>{tenant.contact.email}</p>}
+                    {tenant.contact?.phone && <p>{tenant.contact.phone}</p>}
+                    {tenant.tax_id && <p>RUT: {tenant.tax_id}</p>}
+                    <div className="pt-1">{tenantActions(tenant)}</div>
+                  </CardContent>
+                </Card>
+              ))}
+            </DataCardGrid>
+          ) : viewMode === 'lista' ? (
+            <DataListShell>
+              {tenants.map((tenant) => (
+                <DataListItem
+                  key={tenant.id}
+                  className={cn('justify-between', !tenant.active && 'opacity-60')}
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium">{tenant.first_name} {tenant.last_name}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {[tenant.contact?.email, tenant.contact?.phone].filter(Boolean).join(' · ') || '—'}
+                    </p>
+                  </div>
+                  <TenantStatusBadge active={tenant.active !== false} />
+                  {tenantActions(tenant)}
+                </DataListItem>
+              ))}
+            </DataListShell>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -207,7 +296,7 @@ export function TenantsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.data.map((tenant) => (
+                  {tenants.map((tenant) => (
                     <tr
                       key={tenant.id}
                       className={cn('border-b hover:bg-muted/50', !tenant.active && 'opacity-60')}
@@ -216,42 +305,7 @@ export function TenantsPage() {
                       <td className="p-4 text-muted-foreground">{tenant.contact?.email ?? '—'}</td>
                       <td className="p-4 text-muted-foreground">{tenant.contact?.phone ?? '—'}</td>
                       <td className="p-4"><TenantStatusBadge active={tenant.active !== false} /></td>
-                      <td className="p-4">
-                        <div className="flex gap-1">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => openEdit(tenant)}
-                            title="Editar arrendatario"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          {tenant.active !== false && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={() => { setEditingId(tenant.id); setConfirmDeactivate(true) }}
-                              title="Dar de baja"
-                            >
-                              <UserMinus className="h-4 w-4" />
-                            </Button>
-                          )}
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive hover:text-destructive"
-                            onClick={() => { setEditingId(tenant.id); setConfirmDelete(true) }}
-                            title="Eliminar"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </td>
+                      <td className="p-4">{tenantActions(tenant)}</td>
                     </tr>
                   ))}
                 </tbody>

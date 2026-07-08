@@ -25,6 +25,7 @@ type PropertyWritableFields struct {
 	ParkingPropertyID   string `json:"parking_property_id"`
 	WarehousePropertyID string `json:"warehouse_property_id"`
 	ValueUF           float64 `json:"value_uf"`
+	CommercialValueUF float64 `json:"commercial_value_uf"`
 	DebtUF            float64 `json:"debt_uf"`
 	OriginalLoanUF    float64 `json:"original_loan_uf"`
 	MonthlyMortgageUF float64 `json:"monthly_mortgage_uf"`
@@ -142,6 +143,7 @@ func applyPropertyFields(p *domain.Property, fields PropertyWritableFields) {
 		p.Deed = domain.DeedInfo{}
 	}
 	p.Financials.ValueUF = fields.ValueUF
+	p.Financials.CommercialValueUF = fields.CommercialValueUF
 	p.Financials.DebtUF = fields.DebtUF
 	p.Financials.OriginalLoanUF = fields.OriginalLoanUF
 	p.Financials.MonthlyMortgageUF = fields.MonthlyMortgageUF

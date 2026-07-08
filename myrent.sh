@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 #
 # MyRent Go — menú interactivo para desarrollo local (principal + submenús)
-# Uso: ./myrent.sh  |  Atajos CLI: ./myrent.sh git-status, start, quickstart, docker-up, …
+# Uso: ./myrent.sh  |  Guía rápida: ./myrent.sh modes  o  ./myrent.sh help-ports
 #
-# Docker (dev): docker-build-all, docker-build-api, docker-build-frontend,
-#   docker-up, docker-up-api, docker-up-frontend, docker-down, docker-restart,
-#   docker-logs, docker-logs-api, docker-logs-frontend, docker-up-prod
+# Modos (ver tabla con ./myrent.sh modes):
+#   NATIVO  — Vite :4000 + API :7070  (local-start, watch, local-restart)
+#   DOCKER  — nginx :3000 + API :7070 (docker-up, docker-restart)
+#   No correr API nativa y contenedor Docker a la vez (mismo :7070).
+#
+# CLI nativo:  local-start | local-stop | local-status | local-restart | watch
+#              (alias: start, stop, restart)
+# CLI Docker:  docker-up | docker-down | docker-restart | docker-build-all
+# Tests:       test, test-all, test-unit, test-e2e, …
+# Sync Docker: start/restart/quickstart actualizan imágenes (MYRENT_SYNC_DOCKER=0 para desactivar)
 #
 
 set -euo pipefail
@@ -35,6 +42,7 @@ DOCKER_COMPOSE_PROD="${ROOT_DIR}/docker-compose.prod.yml"
 DOCKER_IMAGE_API="myrent-api"
 DOCKER_IMAGE_FRONTEND="myrent-frontend"
 DOCKER_FRONTEND_PORT="${MYRENT_DOCKER_FRONTEND_PORT:-3000}"
+MYRENT_SYNC_DOCKER="${MYRENT_SYNC_DOCKER:-1}"
 
 ADMIN_USER="admin"
 ADMIN_PASS="admin123"
@@ -52,6 +60,129 @@ NC='\033[0m'
 info()  { echo -e "${GREEN}[✓]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
 error() { echo -e "${RED}[✗]${NC} $*" >&2; }
+native_api_active() {
+  if is_running "$API_PID_FILE"; then
+    return 0
+  fi
+  if port_in_use "$API_PORT" && ! docker_container_running "myrent-api"; then
+    return 0
+  fi
+  return 1
+}
+
+docker_api_active() {
+  docker_container_running "myrent-api" && port_in_use "$API_PORT"
+}
+
+detect_dev_mode_summary() {
+  local native_fe=false native_api=false docker_fe=false docker_api=false
+
+  is_running "$FRONTEND_PID_FILE" && native_fe=true
+  native_api_active && native_api=true
+  docker_container_running "myrent-frontend" 2>/dev/null && docker_fe=true
+  docker_api_active && docker_api=true
+
+  if $native_api && $native_fe; then
+    echo -e "${GREEN}NATIVO${NC} — App :${FRONTEND_PORT}, API :${API_PORT}"
+  elif $docker_api && $docker_fe; then
+    echo -e "${CYAN}DOCKER${NC} — App :${DOCKER_FRONTEND_PORT}, API :${API_PORT}"
+  elif $native_api || $native_fe; then
+    echo -e "${YELLOW}NATIVO (parcial)${NC} — :${FRONTEND_PORT} / :${API_PORT}"
+  elif $docker_api || $docker_fe; then
+    echo -e "${YELLOW}DOCKER (parcial)${NC} — :${DOCKER_FRONTEND_PORT} / :${API_PORT}"
+  else
+    echo -e "${YELLOW}ninguno${NC} — ./myrent.sh modes"
+  fi
+}
+
+show_dev_modes_help() {
+  echo ""
+  echo -e "  ${BOLD}Modos de desarrollo — puertos y recarga${NC}"
+  echo ""
+  printf "  %-20s %-12s %-8s %s\n" "Modo" "Frontend" "API" "Cuándo reiniciar"
+  echo "  ───────────────────────────────────────────────────────────────────────────"
+  printf "  %-20s %-12s %-8s %s\n" "Nativo + watch" ":${FRONTEND_PORT} (Vite)" ":${API_PORT}" "Auto (air + HMR)"
+  printf "  %-20s %-12s %-8s %s\n" "Nativo manual" ":${FRONTEND_PORT} (Vite)" ":${API_PORT}" "local-restart"
+  printf "  %-20s %-12s %-8s %s\n" "Docker" ":${DOCKER_FRONTEND_PORT} (nginx)" ":${API_PORT}" "docker-restart"
+  echo ""
+  echo -e "  ${YELLOW}Regla clave:${NC} API nativa y Docker comparten :${API_PORT} — solo una a la vez."
+  echo "  Nativo usa Vite en :${FRONTEND_PORT}; Docker sirve build estático en :${DOCKER_FRONTEND_PORT}."
+  echo ""
+  echo "  Comandos:"
+  echo "    ./myrent.sh local-start      Nativo en segundo plano"
+  echo "    ./myrent.sh watch            Nativo con recarga automática"
+  echo "    ./myrent.sh local-restart    Reiniciar nativo tras cambios"
+  echo "    ./myrent.sh docker-up        Levantar stack Docker"
+  echo "    ./myrent.sh docker-restart   Rebuild + reinicio Docker"
+  echo "    ./myrent.sh docker-down      Detener stack Docker"
+  echo ""
+}
+
+show_active_mode_banner() {
+  local mode="$1"
+  echo ""
+  case "$mode" in
+    native)
+      echo -e "  ${GREEN}${BOLD}▶ Modo activo: NATIVO${NC}"
+      echo "    App:      http://localhost:${FRONTEND_PORT}  (Vite dev)"
+      echo "    API:      http://localhost:${API_PORT}"
+      echo "    Recarga:  ./myrent.sh watch  (auto)  |  ./myrent.sh local-restart  (manual)"
+      ;;
+    native-watch)
+      echo -e "  ${GREEN}${BOLD}▶ Modo activo: NATIVO + WATCH${NC}"
+      echo "    App:      http://localhost:${FRONTEND_PORT}  (Vite HMR)"
+      echo "    API:      http://localhost:${API_PORT}  (air)"
+      echo "    Recarga:  automática al guardar — Ctrl+C para detener"
+      ;;
+    docker)
+      echo -e "  ${CYAN}${BOLD}▶ Modo activo: DOCKER${NC}"
+      echo "    App:      http://localhost:${DOCKER_FRONTEND_PORT}  (nginx)"
+      echo "    API:      http://localhost:${API_PORT}"
+      echo "    Recarga:  ./myrent.sh docker-restart  (rebuild + up)"
+      ;;
+  esac
+  echo ""
+}
+
+port_conflict_check() {
+  local context="${1:-any}"
+  local blocked=false
+  local has_native=false has_docker_api=false
+
+  if is_running "$API_PID_FILE"; then
+    has_native=true
+  elif port_in_use "$API_PORT"; then
+    if docker_container_running "myrent-api"; then
+      has_docker_api=true
+    else
+      has_native=true
+    fi
+  elif docker_container_running "myrent-api"; then
+    has_docker_api=true
+  fi
+
+  if $has_native && $has_docker_api; then
+    warn "Conflicto en puerto ${API_PORT}: API nativa y contenedor Docker activos a la vez"
+    echo "  Detén uno:"
+    echo "    Nativo:  ./myrent.sh local-stop"
+    echo "    Docker:  ./myrent.sh docker-down"
+    blocked=true
+  elif [[ "$context" == "native" ]] && $has_docker_api; then
+    warn "Puerto ${API_PORT} ocupado por contenedor Docker myrent-api"
+    echo "  Para dev nativo: ./myrent.sh docker-down"
+    echo "  Para seguir con Docker: no uses local-start (app en :${DOCKER_FRONTEND_PORT})"
+    blocked=true
+  elif [[ "$context" == "docker" ]] && $has_native; then
+    warn "Puerto ${API_PORT} ocupado por API nativa (dev local)"
+    echo "  Para Docker: ./myrent.sh local-stop"
+    echo "  Para seguir nativo: no uses docker-up (app en :${FRONTEND_PORT})"
+    blocked=true
+  fi
+
+  $blocked && return 1
+  return 0
+}
+
 header() {
   clear
   echo -e "${CYAN}${BOLD}"
@@ -59,9 +190,8 @@ header() {
   echo "  ║           MyRent Go — Dev Menu           ║"
   echo "  ╚══════════════════════════════════════════╝"
   echo -e "${NC}"
-  echo -e "  App:    ${BOLD}${APP_URL}${NC}"
-  echo -e "  API:    http://localhost:${API_PORT}"
-  echo -e "  Login:  ${BOLD}${ADMIN_USER}${NC} / ${BOLD}${ADMIN_PASS}${NC}"
+  echo -e "  Activo: $(detect_dev_mode_summary)"
+  echo -e "  Login:  ${BOLD}${ADMIN_USER}${NC} / ${BOLD}${ADMIN_PASS}${NC}  |  Guía: ${BOLD}./myrent.sh modes${NC}"
   echo ""
   echo -e "  ${YELLOW}Navegación:${NC} menú principal → submenús  |  ${BOLD}0${NC} = volver o salir"
   echo ""
@@ -134,12 +264,40 @@ mkdir -p "$RUN_DIR" "$LOG_DIR"
 
 load_dotenv() {
   local env_file="${ROOT_DIR}/.env"
-  if [[ -f "$env_file" ]]; then
-    set -a
-    # shellcheck disable=SC1090
-    source "$env_file"
-    set +a
-  fi
+  [[ -f "$env_file" ]] || return 0
+
+  set -a
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+
+    if [[ "$line" == export[[:space:]]* ]]; then
+      line="${line#export}"
+      line="${line#"${line%%[![:space:]]*}"}"
+    fi
+
+    [[ "$line" != *"="* ]] && continue
+
+    local key="${line%%=*}"
+    local val="${line#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    val="${val#"${val%%[![:space:]]*}"}"
+    val="${val%"${val##*[![:space:]]}"}"
+
+    # Valores entre comillas (ej. SMTP_FROM_NAME="MyRent Go")
+    if [[ "$val" =~ ^\"(.*)\"$ ]]; then
+      val="${BASH_REMATCH[1]}"
+    elif [[ "$val" =~ ^\'(.*)\'$ ]]; then
+      val="${BASH_REMATCH[1]}"
+    fi
+
+    printf -v "$key" '%s' "$val"
+    export "$key"
+  done < "$env_file"
+  set +a
 }
 
 # ─── MongoDB ──────────────────────────────────────────────────────────────────
@@ -148,29 +306,89 @@ mongo_available() {
   port_in_use "$MONGO_PORT"
 }
 
-mongo_start() {
-  if mongo_available; then
-    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^myrent-mongodb$'; then
-      info "MongoDB (Docker) ya está corriendo"
-    else
-      info "MongoDB detectado en puerto ${MONGO_PORT}"
+mongo_docker_running() {
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^myrent-mongodb$'
+}
+
+mongo_brew_formulas() {
+  local formula
+  for formula in mongodb-community@7.0 mongodb-community mongodb-community@8.3 mongodb-community@8.2 mongodb-community@8.0; do
+    if command -v brew &>/dev/null && brew list "$formula" &>/dev/null 2>&1; then
+      echo "$formula"
     fi
-    return 0
+  done
+}
+
+mongo_brew_formula() {
+  mongo_brew_formulas | head -1
+}
+
+mongo_brew_installed() {
+  mongo_brew_formulas | grep -q .
+}
+
+mongo_brew_install_hint() {
+  echo "    brew tap mongodb/brew"
+  echo "    brew trust mongodb/brew   # si Homebrew pide confiar el tap"
+  echo "    brew install mongodb-community@7.0   # o mongodb-community"
+  echo "    brew services start mongodb-community@7.0"
+}
+
+mongo_report_running() {
+  if mongo_docker_running; then
+    info "MongoDB (Docker) ya está corriendo"
+  else
+    info "MongoDB detectado en puerto ${MONGO_PORT}"
+  fi
+}
+
+mongo_start_brew() {
+  local formula wait_secs="${1:-15}"
+  local started=false
+
+  if ! mongo_brew_installed; then
+    return 1
   fi
 
+  while IFS= read -r formula; do
+    [[ -z "$formula" ]] && continue
+    info "Iniciando MongoDB con Homebrew (${formula})..."
+    if ! brew services start "$formula" >>"$MONGO_LOG" 2>&1; then
+      warn "No se pudo iniciar ${formula} con brew services."
+      tail -5 "$MONGO_LOG" 2>/dev/null | sed 's/^/    /'
+      continue
+    fi
+    started=true
+    if wait_for_port "$MONGO_PORT" "$wait_secs"; then
+      info "MongoDB listo en puerto ${MONGO_PORT} (Homebrew, ${formula})"
+      return 0
+    fi
+    warn "${formula} no respondió en ${wait_secs}s — probando otra fórmula si existe..."
+    brew services stop "$formula" >>"$MONGO_LOG" 2>&1 || true
+  done < <(mongo_brew_formulas)
+
+  if $started; then
+    warn "MongoDB (Homebrew) no respondió en puerto ${MONGO_PORT}."
+  fi
+  return 1
+}
+
+mongo_start_docker() {
   if ! command -v docker &>/dev/null; then
-    error "MongoDB no está disponible en puerto ${MONGO_PORT} y Docker no está instalado."
+    error "Docker no está instalado."
     echo ""
     echo "  Opciones:"
-    echo "    • Instala e inicia Docker Desktop, luego reintenta"
-    echo "    • O instala MongoDB local: brew install mongodb-community && brew services start mongodb-community"
+    echo "  MongoDB nativo:"
+    mongo_brew_install_hint | sed 's/^/    /'
+    echo "    • O instala Docker Desktop para usar solo el contenedor MongoDB"
     return 1
   fi
 
   if ! docker info &>/dev/null; then
     error "Docker no está corriendo."
     echo ""
-    echo "  Inicia Docker Desktop y vuelve a ejecutar esta opción."
+    echo "  Inicia Docker Desktop o usa MongoDB nativo:"
+    mongo_brew_install_hint | sed 's/^/    /'
     return 1
   fi
 
@@ -183,12 +401,69 @@ mongo_start() {
   fi
 
   if wait_for_port "$MONGO_PORT" 60; then
-    info "MongoDB listo en puerto ${MONGO_PORT}"
-  else
-    error "MongoDB no respondió a tiempo. Ver logs: $MONGO_LOG"
-    tail -10 "$MONGO_LOG" 2>/dev/null | sed 's/^/    /'
-    return 1
+    info "MongoDB listo en puerto ${MONGO_PORT} (Docker)"
+    return 0
   fi
+
+  error "MongoDB no respondió a tiempo. Ver logs: $MONGO_LOG"
+  tail -10 "$MONGO_LOG" 2>/dev/null | sed 's/^/    /'
+  return 1
+}
+
+# Para dev nativo (local-start): brew → Docker (solo mongodb) → aviso claro.
+mongo_ensure_for_local() {
+  local with_docker_mongo="${1:-false}"
+
+  if mongo_available; then
+    mongo_report_running
+    return 0
+  fi
+
+  if mongo_start_brew 15; then
+    return 0
+  fi
+
+  if command -v docker &>/dev/null && docker info &>/dev/null; then
+    if mongo_start_docker; then
+      return 0
+    fi
+  elif [[ "$with_docker_mongo" == true ]]; then
+    mongo_start_docker || true
+    mongo_available && return 0
+  fi
+
+  warn "MongoDB no está disponible en puerto ${MONGO_PORT}."
+  echo ""
+  if ! mongo_brew_installed; then
+    echo "  MongoDB (servidor) no está instalado con Homebrew. Instala e inicia:"
+    mongo_brew_install_hint | sed 's/^/    /'
+    echo ""
+  fi
+  if command -v docker &>/dev/null && ! docker info &>/dev/null; then
+    echo "  Docker está instalado pero apagado. Para MongoDB + Mailpit sin instalar brew:"
+    echo "    Inicia Docker Desktop y ejecuta:"
+    echo "      docker compose -f docker-compose.yml up -d mongodb"
+    echo "      docker compose -f docker-compose.mail.yml up -d"
+    echo "    Luego: ./myrent.sh local-restart"
+    echo ""
+  fi
+  echo "  Se iniciarán API y Frontend; /health y login fallarán hasta que MongoDB esté activo."
+  echo "  Atajo: ./myrent.sh local-start --with-docker-mongo  (requiere Docker en marcha)"
+  return 1
+}
+
+# Menú / bootstrap: puerto existente → Homebrew → Docker (requiere daemon si no hay nativo).
+mongo_start() {
+  if mongo_available; then
+    mongo_report_running
+    return 0
+  fi
+
+  if mongo_start_brew 60; then
+    return 0
+  fi
+
+  mongo_start_docker
 }
 
 mongo_stop() {
@@ -212,6 +487,11 @@ mongo_logs() {
 
 # ─── Mailpit (opcional — solo desarrollo sin SMTP real) ───────────────────────
 
+smtp_configured() {
+  load_dotenv
+  [[ -n "${SMTP_HOST:-}" && -n "${SMTP_USER:-}" && -n "${SMTP_PASSWORD:-}" && -n "${SMTP_FROM:-${FROM_EMAIL:-}}" ]]
+}
+
 mailpit_available() {
   port_in_use "$MAIL_SMTP_PORT"
 }
@@ -227,30 +507,41 @@ mailpit_start() {
   fi
 
   if ! command -v docker &>/dev/null; then
-    warn "Mailpit no disponible: Docker no está instalado."
-    echo "  Para correo real configura SMTP en .env (ver .env.example)."
+    if smtp_configured; then
+      info "Mailpit omitido — SMTP real configurado en .env (${SMTP_HOST})"
+    else
+      warn "Mailpit no disponible (Docker no instalado). Opcional en dev."
+      echo "  Configura SMTP en .env (ver .env.example) o instala Docker para Mailpit."
+    fi
     return 0
   fi
 
   if ! docker info &>/dev/null; then
-    warn "Mailpit no disponible: Docker no está corriendo."
+    if smtp_configured; then
+      info "Mailpit omitido — SMTP real configurado en .env (${SMTP_HOST})"
+    else
+      warn "Mailpit no disponible (Docker apagado). Opcional en dev."
+      echo "  Inicia Docker y: docker compose -f docker-compose.mail.yml up -d"
+      echo "  O configura SMTP real en .env (ver .env.example)."
+    fi
     return 0
   fi
 
   info "Iniciando Mailpit con Docker..."
   if ! docker compose -f "${ROOT_DIR}/docker-compose.mail.yml" up -d >>"$MAIL_LOG" 2>&1; then
-    error "No se pudo levantar Mailpit."
+    warn "No se pudo levantar Mailpit (opcional en dev)."
     tail -10 "$MAIL_LOG" 2>/dev/null | sed 's/^/    /'
-    return 1
+    echo "  Configura SMTP real en .env o inicia Mailpit cuando Docker esté disponible."
+    return 0
   fi
 
   if wait_for_port "$MAIL_SMTP_PORT" 30; then
     info "Mailpit listo — bandeja: http://localhost:${MAIL_UI_PORT}  SMTP: localhost:${MAIL_SMTP_PORT}"
   else
-    error "Mailpit no respondió a tiempo. Ver logs: $MAIL_LOG"
+    warn "Mailpit no respondió a tiempo (opcional). Ver logs: $MAIL_LOG"
     tail -10 "$MAIL_LOG" 2>/dev/null | sed 's/^/    /'
-    return 1
   fi
+  return 0
 }
 
 mailpit_stop() {
@@ -417,6 +708,70 @@ docker_compose_prod() {
   docker compose -f "$DOCKER_COMPOSE_PROD" $env_args "$@"
 }
 
+docker_container_running() {
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${1}$"
+}
+
+# Reconstruye imágenes Docker tras reinicio dev nativo; reinicia contenedores solo si ya corrían.
+docker_sync_after_restart() {
+  if [[ "$MYRENT_SYNC_DOCKER" == "0" ]]; then
+    return 0
+  fi
+
+  if ! command -v docker &>/dev/null || ! docker info &>/dev/null; then
+    warn "Docker no disponible — omitiendo actualización de imágenes"
+    return 0
+  fi
+
+  echo ""
+  info "Actualizando imágenes Docker (api + frontend)..."
+  if ! docker_compose_dev build api frontend; then
+    warn "Build Docker falló — dev nativo sigue activo"
+    return 0
+  fi
+  info "Imágenes Docker actualizadas"
+
+  local api_docker=false frontend_docker=false
+  docker_container_running "myrent-api" && api_docker=true
+  docker_container_running "myrent-frontend" && frontend_docker=true
+
+  if ! $api_docker && ! $frontend_docker; then
+    info "Stack Docker detenido — solo imágenes actualizadas (sin conflicto de puertos)"
+    return 0
+  fi
+
+  # Dev nativo y Docker API comparten puerto 7070
+  local native_api=false
+  if is_running "$API_PID_FILE"; then
+    native_api=true
+  elif port_in_use "$API_PORT" && ! docker_container_running "myrent-api"; then
+    native_api=true
+  fi
+
+  local services=()
+  if $api_docker; then
+    if $native_api; then
+      warn "Puerto ${API_PORT} en uso por dev nativo — contenedor API Docker no se reiniciará"
+    else
+      services+=(api)
+    fi
+  fi
+  if $frontend_docker; then
+    services+=(frontend)
+  fi
+
+  if [[ ${#services[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  info "Reiniciando contenedores Docker: ${services[*]}..."
+  if ! docker_compose_dev up -d "${services[@]}"; then
+    warn "No se pudieron reiniciar algunos contenedores Docker"
+  else
+    info "Contenedores Docker actualizados"
+  fi
+}
+
 docker_build_api() {
   docker_require || return 1
   info "Construyendo imagen API (${DOCKER_IMAGE_API})..."
@@ -437,20 +792,22 @@ docker_build_all() {
 
 docker_up() {
   docker_require || return 1
-  info "Levantando stack completo (MongoDB + API + Frontend)..."
+  port_conflict_check docker || return 1
+  info "Levantando stack Docker (MongoDB + API + Frontend)..."
   docker_compose_dev up -d --build || return 1
   info "Stack Docker listo"
-  echo "  API:      http://localhost:${API_PORT}"
-  echo "  Frontend: http://localhost:${DOCKER_FRONTEND_PORT}"
+  show_active_mode_banner docker
   [[ "${SKIP_PAUSE:-}" != "1" ]] && pause
 }
 
 docker_up_api() {
   docker_require || return 1
-  info "Levantando MongoDB + API..."
+  port_conflict_check docker || return 1
+  info "Levantando MongoDB + API (Docker)..."
   docker_compose_dev up -d --build mongodb api || return 1
   if wait_for_http "http://localhost:${API_PORT}/health" 60; then
-    info "API lista → http://localhost:${API_PORT}/health"
+    info "API Docker lista → http://localhost:${API_PORT}/health"
+    echo "  Frontend nativo: :${FRONTEND_PORT}  |  Docker: :${DOCKER_FRONTEND_PORT}"
   else
     warn "API aún no responde. Ver: ./myrent.sh docker-logs-api"
   fi
@@ -459,9 +816,11 @@ docker_up_api() {
 
 docker_up_frontend() {
   docker_require || return 1
-  info "Levantando Frontend (+ API y MongoDB)..."
+  port_conflict_check docker || return 1
+  info "Levantando Frontend Docker (+ API y MongoDB)..."
   docker_compose_dev up -d --build frontend || return 1
-  info "Frontend listo → http://localhost:${DOCKER_FRONTEND_PORT}"
+  info "Frontend Docker listo"
+  show_active_mode_banner docker
   [[ "${SKIP_PAUSE:-}" != "1" ]] && pause
 }
 
@@ -475,11 +834,11 @@ docker_down() {
 
 docker_restart() {
   docker_require || return 1
-  info "Reconstruyendo y reiniciando API + Frontend..."
+  port_conflict_check docker || return 1
+  info "Reconstruyendo y reiniciando API + Frontend (Docker)..."
   docker_compose_dev up -d --build --force-recreate api frontend || return 1
-  info "API y Frontend reiniciados"
-  echo "  API:      http://localhost:${API_PORT}"
-  echo "  Frontend: http://localhost:${DOCKER_FRONTEND_PORT}"
+  info "API y Frontend Docker reiniciados"
+  show_active_mode_banner docker
   [[ "${SKIP_PAUSE:-}" != "1" ]] && pause
 }
 
@@ -510,21 +869,18 @@ docker_logs_frontend() {
 
 docker_up_prod() {
   docker_require || return 1
-  if [[ "${1:-}" != "--yes" ]]; then
-    header
-    echo "  Levantando stack de producción..."
-    echo ""
-    warn "Usa docker-compose.prod.yml — requiere .env con JWT_SECRET, CORS_ORIGINS, FRONTEND_URL"
-    echo ""
-    read -r -p "  ¿Continuar? [s/N]: " confirm
-    if [[ ! "$confirm" =~ ^[Ss]$ ]]; then
-      warn "Cancelado"
-      pause
-      return 0
-    fi
+  local deploy_script="${ROOT_DIR}/scripts/deploy-prod.sh"
+  if [[ ! -x "$deploy_script" ]]; then
+    error "No se encontró scripts/deploy-prod.sh"
+    echo "  chmod +x scripts/deploy-prod.sh"
+    pause
+    return 1
   fi
-  docker_compose_prod up -d --build || return 1
-  info "Stack de producción levantado"
+  if [[ "${1:-}" == "--yes" ]]; then
+    SKIP_PAUSE=1 "$deploy_script" --yes
+  else
+    "$deploy_script"
+  fi
   [[ "${SKIP_PAUSE:-}" != "1" ]] && pause
 }
 
@@ -573,6 +929,14 @@ do_install() {
 
   info "npm packages..."
   (cd "${ROOT_DIR}/frontend" && npm install)
+
+  if air_available; then
+    info "air (hot reload API) ya instalado"
+  else
+    warn "air no instalado — recarga automática de API no disponible"
+    echo "  Instala con: go install github.com/air-verse/air@latest"
+    echo "  Asegúrate de tener \$HOME/go/bin en PATH."
+  fi
 
   info "Dependencias instaladas"
   [[ "${SKIP_PAUSE:-}" != "1" ]] && pause
@@ -633,7 +997,52 @@ do_bootstrap_admin() {
 
 # ─── API ──────────────────────────────────────────────────────────────────────
 
+api_env_export() {
+  load_dotenv
+  export APP_ENV="${APP_ENV:-development}"
+  export APP_PORT="${APP_PORT:-$API_PORT}"
+  export MONGODB_URI="${MONGODB_URI:-mongodb://localhost:${MONGO_PORT}}"
+  export MONGODB_DATABASE="${MONGODB_DATABASE:-myrent}"
+  export JWT_SECRET="${JWT_SECRET:-dev-secret-change-in-production-min-32-chars}"
+  export JWT_ACCESS_TTL="${JWT_ACCESS_TTL:-24h}"
+  export CORS_ORIGINS="${CORS_ORIGINS:-http://localhost:${FRONTEND_PORT},http://localhost:5173}"
+  export FRONTEND_URL="${FRONTEND_URL:-$APP_URL}"
+}
+
+air_bin() {
+  if command -v air &>/dev/null; then
+    command -v air
+  elif [[ -x "${HOME}/go/bin/air" ]]; then
+    echo "${HOME}/go/bin/air"
+  else
+    return 1
+  fi
+}
+
+air_available() {
+  air_bin &>/dev/null
+}
+
+air_install_hint() {
+  error "air no está instalado (recarga automática de API)."
+  echo ""
+  echo "  Instala con: go install github.com/air-verse/air@latest"
+  echo "  Luego agrega \$HOME/go/bin a PATH si hace falta."
+  return 1
+}
+
+api_release_port() {
+  if port_in_use "$API_PORT"; then
+    lsof -ti ":${API_PORT}" | xargs kill -9 2>/dev/null || true
+    sleep 0.5
+  fi
+}
+
 api_start() {
+  local lenient="${1:-false}"
+  local with_docker_mongo="${2:-false}"
+  local skip_mongo="${3:-false}"
+
   if [[ -f "$API_PID_FILE" ]] && ! is_running "$API_PID_FILE"; then
     warn "PID file obsoleto; limpiando..."
     rm -f "$API_PID_FILE"
@@ -649,7 +1058,13 @@ api_start() {
     return 1
   fi
 
-  mongo_start || return 1
+  if [[ "$skip_mongo" != true ]]; then
+    if [[ "$lenient" == true ]]; then
+      mongo_ensure_for_local "$with_docker_mongo" || true
+    else
+      mongo_start || return 1
+    fi
+  fi
 
   info "Iniciando API en puerto ${API_PORT}..."
   : >"$API_LOG"
@@ -666,22 +1081,23 @@ api_start() {
     (cd "${ROOT_DIR}/backend" && CGO_ENABLED=0 go build -o "${ROOT_DIR}/bin/api" ./cmd/api) || return 1
   fi
 
-  (
-    load_dotenv
-    export APP_ENV="${APP_ENV:-development}"
-    export APP_PORT="${APP_PORT:-$API_PORT}"
-    export MONGODB_URI="${MONGODB_URI:-mongodb://localhost:${MONGO_PORT}}"
-    export MONGODB_DATABASE="${MONGODB_DATABASE:-myrent}"
-    export JWT_SECRET="${JWT_SECRET:-dev-secret-change-in-production-min-32-chars}"
-    export JWT_ACCESS_TTL="${JWT_ACCESS_TTL:-24h}"
-    export CORS_ORIGINS="${CORS_ORIGINS:-http://localhost:${FRONTEND_PORT},http://localhost:5173}"
-    export FRONTEND_URL="${FRONTEND_URL:-$APP_URL}"
-    nohup "${ROOT_DIR}/bin/api" >>"$API_LOG" 2>&1 &
-    echo $! >"$API_PID_FILE"
-  )
+  api_env_export
+  nohup "${ROOT_DIR}/bin/api" >>"$API_LOG" 2>&1 &
+  echo $! >"$API_PID_FILE"
+  disown 2>/dev/null || true
 
   if wait_for_http "http://localhost:${API_PORT}/health" 45; then
     info "API lista → http://localhost:${API_PORT}/health"
+  elif [[ "$lenient" == true ]] && ! mongo_available; then
+    if is_running "$API_PID_FILE"; then
+      warn "API en ejecución pero /health no responde — MongoDB no está disponible."
+    else
+      rm -f "$API_PID_FILE"
+      warn "API no pudo mantenerse en marcha sin MongoDB."
+      echo "  Levanta MongoDB y ejecuta: ./myrent.sh local-restart"
+    fi
+    echo "  Ver logs: tail -f $API_LOG"
+    return 0
   else
     error "API no respondió. Ver: tail -f $API_LOG"
     return 1
@@ -702,11 +1118,72 @@ api_stop() {
     warn "API no está corriendo"
     rm -f "$API_PID_FILE"
   fi
+
+  if port_in_use "$API_PORT"; then
+    api_release_port
+    info "Puerto ${API_PORT} liberado"
+  fi
+}
+
+api_watch_run() {
+  air_available || air_install_hint || return 1
+
+  api_stop
+
+  if port_in_use "$API_PORT"; then
+    error "Puerto ${API_PORT} sigue en uso"
+    return 1
+  fi
+
+  mongo_start || return 1
+
+  info "API con recarga automática (air) en puerto ${API_PORT}..."
+  echo "  Ctrl+C para detener"
+  echo ""
+
+  (
+    cd "${ROOT_DIR}/backend"
+    api_env_export
+    exec "$(air_bin)"
+  )
+}
+
+do_watch() {
+  header
+  echo "  Desarrollo con recarga automática..."
+  echo ""
+
+  air_available || { air_install_hint; pause; return 1; }
+
+  mongo_start || { pause; return 1; }
+
+  api_stop
+  frontend_stop
+
+  frontend_start || { pause; return 1; }
+
+  echo ""
+  info "Recarga automática activa"
+  show_active_mode_banner native-watch
+
+  trap 'frontend_stop; api_release_port; trap - EXIT INT TERM' EXIT INT TERM
+
+  api_watch_run
+  local rc=$?
+
+  trap - EXIT INT TERM
+  frontend_stop
+  api_release_port
+
+  return "$rc"
 }
 
 # ─── Frontend ─────────────────────────────────────────────────────────────────
 
 frontend_start() {
+  local lenient="${1:-false}"
+  local with_docker_mongo="${2:-false}"
+
   if [[ -f "$FRONTEND_PID_FILE" ]] && ! is_running "$FRONTEND_PID_FILE"; then
     warn "PID file obsoleto; limpiando..."
     rm -f "$FRONTEND_PID_FILE"
@@ -718,8 +1195,14 @@ frontend_start() {
   fi
 
   if ! curl -sf "http://localhost:${API_PORT}/health" &>/dev/null; then
-    warn "API no responde; iniciándola primero..."
-    api_start || return 1
+    if is_running "$API_PID_FILE"; then
+      warn "API en ejecución pero /health no responde (¿MongoDB no disponible?). Continuando con frontend..."
+    elif [[ "$lenient" == true ]]; then
+      warn "API no responde — iniciando frontend igualmente (levanta MongoDB y usa ./myrent.sh local-restart)."
+    else
+      warn "API no responde; iniciándola primero..."
+      api_start || return 1
+    fi
   fi
 
   if port_in_use "$FRONTEND_PORT"; then
@@ -739,6 +1222,7 @@ frontend_start() {
     nohup npm run dev -- --host >>"$FRONTEND_LOG" 2>&1 &
     echo $! >"$FRONTEND_PID_FILE"
   )
+  disown 2>/dev/null || true
 
   if wait_for_port "$FRONTEND_PORT" 60; then
     info "Frontend listo → ${APP_URL}"
@@ -776,24 +1260,191 @@ frontend_stop() {
 
 # ─── Orquestación ─────────────────────────────────────────────────────────────
 
+local_show_urls() {
+  show_active_mode_banner native
+  echo -e "  Login:    ${BOLD}${ADMIN_USER}${NC} / ${BOLD}${ADMIN_PASS}${NC}"
+  if ! mongo_available; then
+    warn "MongoDB no está en puerto ${MONGO_PORT} — el login no funcionará hasta iniciarlo."
+  fi
+  if ! mailpit_available; then
+    if smtp_configured; then
+      info "Mailpit no activo — correo vía SMTP en .env (${SMTP_HOST})"
+    else
+      warn "Mailpit no activo (opcional) — correo de prueba no disponible."
+      echo "  Docker: docker compose -f docker-compose.mail.yml up -d"
+      echo "  O configura SMTP en .env (ver .env.example)"
+    fi
+  fi
+  echo "  PIDs:     API → ${API_PID_FILE}  Frontend → ${FRONTEND_PID_FILE}"
+  echo "  Logs:     tail -f ${API_LOG} ${FRONTEND_LOG}"
+  echo "  Detener:  ./myrent.sh local-stop"
+}
+
+local_start() {
+  local with_docker_mongo=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --with-docker-mongo) with_docker_mongo=true ;;
+      -h|--help)
+        echo "Uso: $0 local-start [--with-docker-mongo]"
+        echo ""
+        echo "  Modo NATIVO — API :${API_PORT}, Frontend Vite :${FRONTEND_PORT}."
+        echo "  Tras cambios: ./myrent.sh local-restart  (o watch para auto-recarga)."
+        echo "  MongoDB: puerto existente → Homebrew → --with-docker-mongo."
+        return 0
+        ;;
+      *)
+        error "Opción desconocida: $1"
+        echo "  Uso: $0 local-start [--with-docker-mongo]"
+        return 1
+        ;;
+    esac
+    shift
+  done
+
+  port_conflict_check native || return 1
+
+  if is_running "$API_PID_FILE" && is_running "$FRONTEND_PID_FILE"; then
+    info "API y Frontend ya están corriendo"
+    local_show_urls
+    return 0
+  fi
+
+  mongo_ensure_for_local "$with_docker_mongo" || true
+
+  api_start true "$with_docker_mongo" true || return 1
+  frontend_start true "$with_docker_mongo" || return 1
+  mailpit_start || true
+
+  local_show_urls
+  docker_sync_after_restart
+}
+
+local_stop() {
+  frontend_stop
+  api_stop
+  info "API y Frontend detenidos (MongoDB sigue activo si lo levantaste antes)"
+}
+
+local_status() {
+  header
+  echo "  Dev local (API + Frontend, nativo):"
+  echo ""
+
+  if is_running "$API_PID_FILE"; then
+    echo -e "  API:       ${GREEN}corriendo${NC} (PID $(cat "$API_PID_FILE"), :${API_PORT})"
+  elif port_in_use "$API_PORT"; then
+    if docker_container_running "myrent-api" 2>/dev/null; then
+      echo -e "  API:       ${YELLOW}Docker myrent-api${NC} (:${API_PORT}) — no es dev nativo"
+    else
+      echo -e "  API:       ${YELLOW}puerto ${API_PORT} en uso (sin PID file)${NC}"
+    fi
+  else
+    echo -e "  API:       ${RED}detenida${NC}"
+  fi
+
+  if is_running "$FRONTEND_PID_FILE"; then
+    echo -e "  Frontend:  ${GREEN}corriendo${NC} (PID $(cat "$FRONTEND_PID_FILE"), :${FRONTEND_PORT})"
+  elif port_in_use "$FRONTEND_PORT"; then
+    echo -e "  Frontend:  ${YELLOW}puerto ${FRONTEND_PORT} en uso (sin PID file)${NC}"
+  else
+    echo -e "  Frontend:  ${RED}detenido${NC}"
+  fi
+
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^myrent-mongodb$'; then
+    echo -e "  MongoDB:   ${GREEN}corriendo${NC} (Docker, :${MONGO_PORT})"
+  elif mongo_available; then
+    echo -e "  MongoDB:   ${GREEN}disponible${NC} (:${MONGO_PORT})"
+  else
+    echo -e "  MongoDB:   ${RED}no disponible${NC}"
+  fi
+
+  load_dotenv
+  if [[ -n "${SMTP_HOST:-}" && -n "${SMTP_USER:-}" && -n "${SMTP_PASSWORD:-}" && -n "${SMTP_FROM:-${FROM_EMAIL:-}}" ]]; then
+    echo -e "  SMTP:      ${GREEN}configurado${NC} (${SMTP_FROM_NAME:-MyRent Go} <${SMTP_FROM:-${FROM_EMAIL:-—}}>)"
+  fi
+
+  echo ""
+  echo "  Logs: API ${API_LOG}  |  Frontend ${FRONTEND_LOG}"
+  [[ "${SKIP_PAUSE:-}" != "1" ]] && pause
+}
+
+local_restart() {
+  local with_docker_mongo=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --with-docker-mongo) with_docker_mongo=true ;;
+      -h|--help)
+        echo "Uso: $0 local-restart [--with-docker-mongo]"
+        return 0
+        ;;
+      *)
+        error "Opción desconocida: $1"
+        return 1
+        ;;
+    esac
+    shift
+  done
+
+  local_stop
+
+  if [[ "$with_docker_mongo" == true ]]; then
+    local_start --with-docker-mongo
+  else
+    local_start
+  fi
+}
+
+do_local_dev_menu() {
+  while true; do
+    header
+    echo -e "  ${BOLD}Desarrollo nativo${NC}  (sin Docker para API/Frontend)"
+    echo "  App Vite :${FRONTEND_PORT}  |  API :${API_PORT}  |  PIDs en .myrent/"
+    echo ""
+    echo "    1)  Levantar en segundo plano (local-start)"
+    echo "    2)  Detener API + Frontend (local-stop)"
+    echo "    3)  Estado (local-status)"
+    echo "    4)  Reiniciar tras cambios (local-restart)"
+    echo "    5)  Abrir navegador (:${FRONTEND_PORT})"
+    echo ""
+    echo "    0)  Volver"
+    echo ""
+    read -r -p "  Opción: " opt
+    echo ""
+
+    case "$opt" in
+      1)
+        local_start || true
+        if [[ "${SKIP_PAUSE:-}" != "1" ]]; then
+          read -r -p "  ¿Abrir navegador? [S/n]: " open_ans
+          if [[ ! "$open_ans" =~ ^[Nn]$ ]]; then
+            open_browser "$APP_URL"
+          fi
+          pause
+        fi
+        ;;
+      2) local_stop; pause ;;
+      3) local_status ;;
+      4) local_restart; [[ $? -ne 0 ]] && pause || pause ;;
+      5) do_open_browser ;;
+      0) return ;;
+      *) warn "Opción inválida"; sleep 1 ;;
+    esac
+  done
+}
+
 do_start_all() {
   header
-  echo "  Levantando stack completo..."
+  echo "  Levantando stack local (MongoDB + API + Frontend)..."
   echo ""
 
-  api_start || return 1
-  frontend_start || return 1
-
-  echo ""
-  info "Stack listo"
-  echo -e "  ${BOLD}${APP_URL}${NC}"
-  echo -e "  Usuario: ${BOLD}${ADMIN_USER}${NC}  Contraseña: ${BOLD}${ADMIN_PASS}${NC}"
-  echo ""
+  local_start || { pause; return 1; }
 
   read -r -p "  ¿Abrir navegador? [S/n]: " open_ans
   if [[ ! "$open_ans" =~ ^[Nn]$ ]]; then
     open_browser "$APP_URL"
   fi
+
   pause
 }
 
@@ -819,21 +1470,16 @@ do_restart_services() {
   echo "  Reiniciando API y Frontend..."
   echo ""
 
-  frontend_stop
-  api_stop
+  local_restart || return 1
 
-  api_start || return 1
-  frontend_start || return 1
-
-  echo ""
-  info "API y Frontend reiniciados"
-  echo -e "  ${BOLD}${APP_URL}${NC}"
   [[ "${SKIP_PAUSE:-}" != "1" ]] && pause
 }
 
 do_status() {
   header
   echo "  Estado de servicios:"
+  echo ""
+  echo -e "  Modo app:  $(detect_dev_mode_summary)"
   echo ""
 
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^myrent-mongodb$'; then
@@ -866,7 +1512,9 @@ do_status() {
   fi
 
   if is_running "$API_PID_FILE"; then
-    echo -e "  API:       ${GREEN}corriendo${NC} (PID $(cat "$API_PID_FILE"), puerto ${API_PORT})"
+    echo -e "  API:       ${GREEN}corriendo${NC} (nativo, PID $(cat "$API_PID_FILE"), :${API_PORT})"
+  elif docker_container_running "myrent-api" 2>/dev/null && port_in_use "$API_PORT"; then
+    echo -e "  API:       ${CYAN}Docker myrent-api${NC} (:${API_PORT})"
   elif port_in_use "$API_PORT"; then
     echo -e "  API:       ${YELLOW}puerto ${API_PORT} en uso (sin PID file)${NC}"
   else
@@ -874,7 +1522,9 @@ do_status() {
   fi
 
   if is_running "$FRONTEND_PID_FILE"; then
-    echo -e "  Frontend:  ${GREEN}corriendo${NC} (PID $(cat "$FRONTEND_PID_FILE"), puerto ${FRONTEND_PORT})"
+    echo -e "  Frontend:  ${GREEN}corriendo${NC} (nativo Vite, PID $(cat "$FRONTEND_PID_FILE"), :${FRONTEND_PORT})"
+  elif docker_container_running "myrent-frontend" 2>/dev/null && port_in_use "$DOCKER_FRONTEND_PORT"; then
+    echo -e "  Frontend:  ${CYAN}Docker myrent-frontend${NC} (:${DOCKER_FRONTEND_PORT})"
   elif port_in_use "$FRONTEND_PORT"; then
     echo -e "  Frontend:  ${YELLOW}puerto ${FRONTEND_PORT} en uso (sin PID file)${NC}"
   else
@@ -883,8 +1533,11 @@ do_status() {
 
   if port_in_use "$FRONTEND_PORT" && ! curl -sf "http://localhost:${API_PORT}/health" &>/dev/null; then
     echo ""
-    warn "Frontend activo pero API no responde — el login fallará. Usa «Base de datos y servicios» → Solo API."
+    warn "Frontend activo pero API no responde — el login fallará."
+    echo "  Nativo: ./myrent.sh local-restart  |  Docker: ./myrent.sh docker-restart"
   fi
+
+  port_conflict_check any || true
 
   echo ""
   echo "  Logs:"
@@ -950,12 +1603,88 @@ do_open_browser() {
   pause
 }
 
-do_test() {
+run_tests() {
+  local mode="${1:-all}"
+  if [[ ! -x "${ROOT_DIR}/scripts/run-tests.sh" ]]; then
+    error "No se encontró scripts/run-tests.sh"
+    return 1
+  fi
+  set +e
+  SKIP_PAUSE=1 "${ROOT_DIR}/scripts/run-tests.sh" "$mode"
+  local rc=$?
+  set -e
+  [[ "${SKIP_PAUSE:-}" != "1" ]] && pause
+  return "$rc"
+}
+
+do_tests_menu() {
+  while true; do
+    header
+    echo -e "  ${BOLD}Ejecutar tests${NC}"
+    echo ""
+    echo "    1)  Todos (backend + frontend unit + E2E)"
+    echo "    2)  Solo unitarios (backend + frontend)"
+    echo "    3)  Solo E2E (Playwright)"
+    echo "    4)  Solo backend (go test)"
+    echo "    5)  Solo frontend unitarios (Vitest)"
+    echo ""
+    echo "  E2E requiere API (:${API_PORT}) y frontend (:${FRONTEND_PORT}); ver docs/TESTING.md"
+    echo ""
+    echo "    0)  Volver"
+    echo ""
+    read -r -p "  Opción: " test_opt
+    echo ""
+
+    case "$test_opt" in
+      1) run_tests all ;;
+      2) run_tests unit ;;
+      3) run_tests e2e ;;
+      4) run_tests backend ;;
+      5) run_tests frontend-unit ;;
+      0) return ;;
+      *) warn "Opción inválida"; sleep 1 ;;
+    esac
+  done
+}
+
+do_pentest() {
   header
-  echo "  Ejecutando tests..."
+  echo "  Pentest de seguridad (ethical hacking local)..."
   echo ""
-  (cd "${ROOT_DIR}/backend" && go test ./... -count=1)
-  info "Tests completados"
+  local pentest_script="${ROOT_DIR}/security/run-pentest.sh"
+  if [[ ! -x "$pentest_script" ]]; then
+    error "No se encontró $pentest_script"
+    echo "  Ver docs/SECURITY_TESTING.md"
+    pause
+    return 1
+  fi
+  echo "  Alcance: localhost API (${API_PORT}) + frontend (${FRONTEND_PORT})"
+  echo "  Informe: security/reports/latest/INFORME.md"
+  echo ""
+  "$pentest_script" "$@"
+  pause
+}
+
+do_cleanup_disk() {
+  header
+  echo "  Liberar espacio en disco (cleanup-disk)..."
+  echo ""
+  local cleanup_script="${ROOT_DIR}/scripts/cleanup-disk.sh"
+  if [[ ! -x "$cleanup_script" ]]; then
+    error "No se encontró $cleanup_script"
+    echo "  chmod +x scripts/cleanup-disk.sh"
+    pause
+    return 1
+  fi
+  echo "  Modo seguro: Docker prune (sin volúmenes) + backup Cursor si está cerrado"
+  echo "  Opciones: --dry-run, --docker-only, --respaldos, --exports, …"
+  echo ""
+  read -r -p "  ¿Modo dry-run (solo simular)? [s/N]: " dry_ans
+  if [[ "$dry_ans" =~ ^[Ss]$ ]]; then
+    "$cleanup_script" --dry-run
+  else
+    "$cleanup_script" --safe
+  fi
   pause
 }
 
@@ -972,10 +1701,12 @@ do_quickstart() {
 
   echo ""
   info "¡Listo para probar!"
-  echo -e "  URL:      ${BOLD}${APP_URL}${NC}"
+  show_active_mode_banner native
   echo -e "  Usuario:  ${BOLD}${ADMIN_USER}${NC}"
   echo -e "  Password: ${BOLD}${ADMIN_PASS}${NC}"
   open_browser "$APP_URL"
+
+  docker_sync_after_restart
   [[ "${SKIP_PAUSE:-}" != "1" ]] && pause
 }
 
@@ -1155,27 +1886,47 @@ show_main_menu() {
   header
   echo -e "  ${BOLD}Menú principal${NC}"
   echo ""
-  echo "    1)  Desarrollo e inicio"
-  echo "    2)  Base de datos y servicios"
-  echo "    3)  Git / GitHub"
-  echo "    4)  Utilidades"
-  echo "    5)  Docker (imágenes y contenedores)"
+  echo -e "  ${BOLD}── Desarrollo nativo${NC}  Vite :${FRONTEND_PORT}  API :${API_PORT}"
+  echo "    1)  Nativo — inicio, watch, reinicio"
+  echo ""
+  echo -e "  ${BOLD}── Docker${NC}  App :${DOCKER_FRONTEND_PORT}  API :${API_PORT}"
+  echo "    2)  Docker — build, levantar, reiniciar"
+  echo ""
+  echo -e "  ${BOLD}── Base de datos${NC}  MongoDB :${MONGO_PORT}  Mailpit"
+  echo "    3)  MongoDB, Mailpit, Mailcow, admin"
+  echo ""
+  echo "    4)  Utilidades (logs, estado, tests)"
+  echo "    5)  Git / GitHub"
+  echo "    6)  Guía de modos y puertos"
   echo ""
   echo "    0)  Salir"
   echo ""
 }
 
-menu_desarrollo() {
+do_modes_help() {
+  header
+  show_dev_modes_help
+  pause
+}
+
+menu_desarrollo_nativo() {
   while true; do
     header
-    echo -e "  ${BOLD}Desarrollo e inicio${NC}"
+    echo -e "  ${BOLD}Desarrollo nativo${NC}  (sin Docker para API/Frontend)"
+    echo "  App :${FRONTEND_PORT} (Vite)  |  API :${API_PORT}  |  MongoDB :${MONGO_PORT}"
     echo ""
-    echo "    1)  Inicio rápido (instalar + admin + levantar + navegador)"
-    echo "    2)  Instalar dependencias"
-    echo "    3)  Build (compilar backend + frontend)"
-    echo "    4)  Levantar todo (MongoDB + API + Frontend)"
-    echo "    5)  Detener servicios"
-    echo "    6)  Reiniciar API y Frontend"
+    echo "    1)  Inicio rápido (instalar + admin + levantar)"
+    echo "    2)  Levantar en segundo plano (local-start)"
+    echo "    3)  Recarga automática (watch — air + HMR)"
+    echo "    4)  Reiniciar tras cambios (local-restart)"
+    echo "    5)  Detener API + Frontend (local-stop)"
+    echo "    6)  Estado (local-status)"
+    echo "    7)  Instalar dependencias"
+    echo "    8)  Build (compilar backend + frontend)"
+    echo "    9)  Abrir navegador"
+    echo ""
+    echo -e "  ${YELLOW}Tras cambiar código:${NC} watch (auto)  o  local-restart (manual)"
+    echo -e "  ${YELLOW}No mezclar${NC} con Docker API en :${API_PORT} — ./myrent.sh modes"
     echo ""
     echo "    0)  Volver al menú principal"
     echo ""
@@ -1184,31 +1935,40 @@ menu_desarrollo() {
 
     case "$opt" in
       1) do_quickstart; [[ $? -ne 0 ]] && pause ;;
-      2) do_install ;;
-      3) do_build ;;
-      4) do_start_all; [[ $? -ne 0 ]] && pause ;;
+      2) do_start_all; [[ $? -ne 0 ]] && pause ;;
+      3) do_watch ;;
+      4) do_restart_services; [[ $? -ne 0 ]] && pause ;;
       5) do_stop_all ;;
-      6) do_restart_services; [[ $? -ne 0 ]] && pause ;;
+      6) local_status ;;
+      7) do_install ;;
+      8) do_build ;;
+      9) do_open_browser ;;
       0) return ;;
       *) warn "Opción inválida"; sleep 1 ;;
     esac
   done
 }
 
+# Alias interno — mantiene compatibilidad con referencias antiguas
+menu_desarrollo() {
+  menu_desarrollo_nativo
+}
+
 menu_base_datos() {
   while true; do
     header
     echo -e "  ${BOLD}Base de datos y servicios${NC}"
+    echo "  MongoDB :${MONGO_PORT}  |  Mailpit UI :${MAIL_UI_PORT}  |  independiente del modo app"
     echo ""
     echo "    1)  Crear admin (admin / admin123)"
-    echo "    2)  Solo MongoDB"
-    echo "    3)  Solo API"
-    echo "    4)  Solo Frontend"
-    echo "    5)  Mailpit (opcional — captura local, no envía correos reales)"
-    echo "    6)  Abrir bandeja Mailpit (http://localhost:${MAIL_UI_PORT})"
-    echo "    7)  Mailcow — instalar (VPS / mail.meincart.com)"
-    echo "    8)  Mailcow — iniciar / detener"
-    echo "    9)  Mailcow — estado y panel admin"
+    echo "    2)  Iniciar MongoDB"
+    echo "    3)  Detener MongoDB (Docker)"
+    echo "    4)  Solo API nativa (:${API_PORT})"
+    echo "    5)  Solo Frontend nativo (:${FRONTEND_PORT})"
+    echo "    6)  Mailpit — iniciar (captura correo local)"
+    echo "    7)  Mailpit — detener / abrir bandeja"
+    echo "    8)  Mailcow — instalar (VPS / mail.meincart.com)"
+    echo "    9)  Mailcow — iniciar / detener / estado"
     echo ""
     echo "    0)  Volver al menú principal"
     echo ""
@@ -1218,27 +1978,29 @@ menu_base_datos() {
     case "$opt" in
       1) do_bootstrap_admin ;;
       2) mongo_start; [[ $? -ne 0 ]] && pause || pause ;;
-      3) api_start; [[ $? -ne 0 ]] && pause || pause ;;
-      4) frontend_start; [[ $? -ne 0 ]] && pause || pause ;;
-      5) mailpit_start; [[ $? -ne 0 ]] && pause || pause ;;
-      6) mailpit_open; pause ;;
-      7) mailcow_setup; pause ;;
-      8)
-        echo "    a) Iniciar  b) Detener"
+      3) mongo_stop; pause ;;
+      4) port_conflict_check native || { pause; continue; }; api_start; [[ $? -ne 0 ]] && pause || pause ;;
+      5) frontend_start; [[ $? -ne 0 ]] && pause || pause ;;
+      6) mailpit_start; [[ $? -ne 0 ]] && pause || pause ;;
+      7)
+        echo "    a) Detener  b) Abrir bandeja"
         read -r -p "  Sub-opción [a/b]: " sub
         case "$sub" in
-          a|A) mailcow_start; [[ $? -ne 0 ]] && pause || pause ;;
-          b|B) mailcow_stop; pause ;;
+          a|A) mailpit_stop; pause ;;
+          b|B) mailpit_open; pause ;;
           *) warn "Opción inválida"; sleep 1 ;;
         esac
         ;;
+      8) mailcow_setup; pause ;;
       9)
-        echo "    a) Estado  b) Abrir panel  c) Logs"
-        read -r -p "  Sub-opción [a/b/c]: " sub
+        echo "    a) Iniciar  b) Detener  c) Estado  d) Panel  e) Logs"
+        read -r -p "  Sub-opción [a/b/c/d/e]: " sub
         case "$sub" in
-          a|A) mailcow_status ;;
-          b|B) mailcow_open; pause ;;
-          c|C) mailcow_logs ;;
+          a|A) mailcow_start; [[ $? -ne 0 ]] && pause || pause ;;
+          b|B) mailcow_stop; pause ;;
+          c|C) mailcow_status ;;
+          d|D) mailcow_open; pause ;;
+          e|E) mailcow_logs ;;
           *) warn "Opción inválida"; sleep 1 ;;
         esac
         ;;
@@ -1281,18 +2043,22 @@ menu_git() {
 menu_docker() {
   while true; do
     header
-    echo -e "  ${BOLD}Docker${NC}"
+    echo -e "  ${BOLD}Docker${NC}  (tipo producción — imágenes en contenedores)"
+    echo "  App :${DOCKER_FRONTEND_PORT} (nginx)  |  API :${API_PORT}  |  MongoDB :${MONGO_PORT}"
     echo ""
-    echo "    1)  Build imagen API"
-    echo "    2)  Build imagen Frontend"
-    echo "    3)  Build ambas imágenes"
-    echo "    4)  Levantar stack completo (dev)"
-    echo "    5)  Levantar solo API (+ MongoDB)"
-    echo "    6)  Levantar solo Frontend (+ dependencias)"
-    echo "    7)  Detener stack (dev)"
-    echo "    8)  Reiniciar API y Frontend (rebuild)"
+    echo "    1)  Levantar stack completo (docker-up)"
+    echo "    2)  Reiniciar tras cambios (docker-restart — rebuild)"
+    echo "    3)  Detener stack (docker-down)"
+    echo "    4)  Build imagen API"
+    echo "    5)  Build imagen Frontend"
+    echo "    6)  Build ambas imágenes"
+    echo "    7)  Levantar solo API (+ MongoDB)"
+    echo "    8)  Levantar solo Frontend (+ dependencias)"
     echo "    9)  Ver logs"
     echo "    10) Producción (docker-compose.prod.yml)"
+    echo ""
+    echo -e "  ${YELLOW}Tras cambiar código:${NC} docker-restart  (rebuild + up)"
+    echo -e "  ${YELLOW}No mezclar${NC} con API nativa en :${API_PORT} — ./myrent.sh modes"
     echo ""
     echo "    0)  Volver al menú principal"
     echo ""
@@ -1300,14 +2066,14 @@ menu_docker() {
     echo ""
 
     case "$opt" in
-      1) docker_build_api; [[ $? -ne 0 ]] && pause || pause ;;
-      2) docker_build_frontend; [[ $? -ne 0 ]] && pause || pause ;;
-      3) docker_build_all; [[ $? -ne 0 ]] && pause || pause ;;
-      4) docker_up; [[ $? -ne 0 ]] && pause ;;
-      5) docker_up_api; [[ $? -ne 0 ]] && pause ;;
-      6) docker_up_frontend; [[ $? -ne 0 ]] && pause ;;
-      7) docker_down ;;
-      8) docker_restart; [[ $? -ne 0 ]] && pause ;;
+      1) docker_up; [[ $? -ne 0 ]] && pause ;;
+      2) docker_restart; [[ $? -ne 0 ]] && pause ;;
+      3) docker_down ;;
+      4) docker_build_api; [[ $? -ne 0 ]] && pause || pause ;;
+      5) docker_build_frontend; [[ $? -ne 0 ]] && pause || pause ;;
+      6) docker_build_all; [[ $? -ne 0 ]] && pause || pause ;;
+      7) docker_up_api; [[ $? -ne 0 ]] && pause ;;
+      8) docker_up_frontend; [[ $? -ne 0 ]] && pause ;;
       9) do_docker_logs_menu ;;
       10) docker_up_prod; [[ $? -ne 0 ]] && pause ;;
       0) return ;;
@@ -1324,7 +2090,9 @@ menu_utilidades() {
     echo "    1)  Ver logs"
     echo "    2)  Estado de servicios"
     echo "    3)  Abrir navegador"
-    echo "    4)  Ejecutar tests"
+    echo "    4)  Ejecutar tests (unit + E2E)"
+    echo "    5)  Pentest de seguridad (ethical hacking)"
+    echo "    6)  Liberar espacio en disco (cleanup-disk)"
     echo ""
     echo "    0)  Volver al menú principal"
     echo ""
@@ -1335,7 +2103,9 @@ menu_utilidades() {
       1) do_logs_menu ;;
       2) do_status ;;
       3) do_open_browser ;;
-      4) do_test ;;
+      4) do_tests_menu ;;
+      5) do_pentest ;;
+      6) do_cleanup_disk ;;
       0) return ;;
       *) warn "Opción inválida"; sleep 1 ;;
     esac
@@ -1350,11 +2120,12 @@ main_menu() {
     echo ""
 
     case "$opt" in
-      1) menu_desarrollo ;;
-      2) menu_base_datos ;;
-      3) menu_git ;;
+      1) menu_desarrollo_nativo ;;
+      2) menu_docker ;;
+      3) menu_base_datos ;;
       4) menu_utilidades ;;
-      5) menu_docker ;;
+      5) menu_git ;;
+      6) do_modes_help ;;
       0)
         echo "  Hasta pronto."
         exit 0
@@ -1375,13 +2146,27 @@ if [[ "${1:-}" != "" ]]; then
     build)      do_build ;;
     seed|bootstrap) do_bootstrap_admin "${2:-}" ;;
     start)      do_start_all ;;
+    local-start) shift; SKIP_PAUSE=1 local_start "$@"; [[ $? -ne 0 ]] && exit 1 ;;
+    local-stop) SKIP_PAUSE=1 local_stop ;;
+    local-status) SKIP_PAUSE=1 local_status ;;
+    local-restart) shift; SKIP_PAUSE=1 local_restart "$@"; [[ $? -ne 0 ]] && exit 1 ;;
+    local)      do_local_dev_menu ;;
     stop)       do_stop_all ;;
     restart)    do_restart_services ;;
     status)     do_status ;;
     logs)       do_logs_menu ;;
     open|browser) open_browser "$APP_URL" ;;
-    test)       do_test ;;
+    test|test-all)     SKIP_PAUSE=1 run_tests all ;;
+    test-unit)         SKIP_PAUSE=1 run_tests unit ;;
+    test-e2e)          SKIP_PAUSE=1 run_tests e2e ;;
+    test-backend)      SKIP_PAUSE=1 run_tests backend ;;
+    test-frontend-unit) SKIP_PAUSE=1 run_tests frontend-unit ;;
+    pentest)    SKIP_PAUSE=1 do_pentest ;;
+    pentest-static) SKIP_PAUSE=1 do_pentest --static-only ;;
+    cleanup-disk) SKIP_PAUSE=1 do_cleanup_disk ;;
     quickstart) SKIP_PAUSE=1 do_quickstart ;;
+    watch)      do_watch ;;
+    api-watch)  api_watch_run ;;
     api)        SKIP_PAUSE=1 api_start ;;
     frontend)   SKIP_PAUSE=1 frontend_start ;;
     mail|mailpit) SKIP_PAUSE=1 mailpit_start ;;
@@ -1403,16 +2188,32 @@ if [[ "${1:-}" != "" ]]; then
     docker-up-frontend) SKIP_PAUSE=1 docker_up_frontend ;;
     docker-down)        SKIP_PAUSE=1 docker_down ;;
     docker-restart)     SKIP_PAUSE=1 docker_restart ;;
+    docker-sync)        SKIP_PAUSE=1 docker_sync_after_restart ;;
     docker-logs)        docker_logs ;;
     docker-logs-api)    docker_logs_api ;;
     docker-logs-frontend) docker_logs_frontend ;;
     docker-up-prod)     SKIP_PAUSE=1 docker_up_prod --yes ;;
+    deploy-prod)        SKIP_PAUSE=1 "${ROOT_DIR}/scripts/deploy-prod.sh" --yes ;;
+    modes|help-ports)
+      show_dev_modes_help
+      ;;
+    help|-h|--help)
+      echo "MyRent Go — ./myrent.sh [comando]"
+      echo ""
+      show_dev_modes_help
+      echo "  Más comandos: install, build, bootstrap, start, local-start, watch,"
+      echo "  docker-up, docker-restart, test, quickstart, git-status, …"
+      echo "  Sin argumentos: menú interactivo."
+      ;;
     *)
-      echo "Uso: $0 [install|build|bootstrap|start|stop|restart|status|logs|open|test|quickstart|"
+      echo "Uso: $0 [install|build|bootstrap|start|local-start [--with-docker-mongo]|local-stop|local-status|local-restart|local|"
+      echo "         stop|restart|watch|api-watch|status|logs|open|modes|help-ports|help|"
+      echo "         test|test-all|test-unit|test-e2e|test-backend|test-frontend-unit|pentest|pentest-static|cleanup-disk|quickstart|"
       echo "         api|frontend|mail|mail-open|mailcow-setup|mailcow-start|mailcow-stop|mailcow-status|mailcow-open|"
       echo "         git-status|git-commit|git-push|git-pull|"
       echo "         docker-build-all|docker-build-api|docker-build-frontend|docker-up|docker-up-api|docker-up-frontend|"
-      echo "         docker-down|docker-restart|docker-logs|docker-logs-api|docker-logs-frontend|docker-up-prod]"
+      echo "         docker-down|docker-restart|docker-sync|docker-logs|docker-logs-api|docker-logs-frontend|"
+      echo "         docker-up-prod|deploy-prod]"
       exit 1
       ;;
   esac

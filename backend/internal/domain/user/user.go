@@ -21,6 +21,7 @@ type User struct {
 	Phone         string   `json:"phone,omitempty" bson:"phone,omitempty"`
 	AvatarURL     string   `json:"avatar_url,omitempty" bson:"avatar_url,omitempty"`
 	Active        bool     `json:"active" bson:"active"`
+	EmailVerified bool     `json:"email_verified" bson:"email_verified"`
 	MFAEnabled    bool     `json:"mfa_enabled" bson:"mfa_enabled"`
 	MFASecret     string   `json:"-" bson:"mfa_secret,omitempty"`
 	Organizations []UserOrg `json:"organizations" bson:"organizations"`
@@ -43,7 +44,8 @@ func NewUser(email, firstName, lastName string) *User {
 		Email:     email,
 		FirstName: firstName,
 		LastName:  lastName,
-		Active:    true,
+		Active:        true,
+		EmailVerified: true,
 		Preferences: UserPrefs{
 			Theme:  "system",
 			Locale: "es",
@@ -66,4 +68,51 @@ func (u *User) HasRole(orgID string, roles ...Role) bool {
 		}
 	}
 	return false
+}
+
+func IsValidRole(r Role) bool {
+	switch r {
+	case RoleOwner, RoleAdmin, RoleManager, RoleAccountant, RoleViewer:
+		return true
+	default:
+		return false
+	}
+}
+
+func CanManageUsers(r Role) bool {
+	return r == RoleOwner || r == RoleAdmin
+}
+
+func (u *User) OrgRole(orgID string) (Role, bool) {
+	for _, o := range u.Organizations {
+		if o.OrganizationID == orgID {
+			return o.Role, true
+		}
+	}
+	return "", false
+}
+
+func (u *User) SetOrgRole(orgID string, role Role) {
+	for i, o := range u.Organizations {
+		if o.OrganizationID == orgID {
+			u.Organizations[i].Role = role
+			return
+		}
+	}
+	u.Organizations = append(u.Organizations, UserOrg{OrganizationID: orgID, Role: role})
+}
+
+func (u *User) RemoveFromOrg(orgID string) {
+	out := u.Organizations[:0]
+	for _, o := range u.Organizations {
+		if o.OrganizationID != orgID {
+			out = append(out, o)
+		}
+	}
+	u.Organizations = out
+}
+
+func (u *User) BelongsToOrg(orgID string) bool {
+	_, ok := u.OrgRole(orgID)
+	return ok
 }

@@ -5,6 +5,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { LoadingSkeleton } from '@/components/ui/page'
 import { api } from '@/lib/api'
+import { useUF } from '@/hooks/useUF'
 import { formatCurrency, formatDate, formatMonthLabel, formatUF } from '@/lib/utils'
 import { CLPWithUF, UFIndicatorNote, UFWithCLP } from '@/components/UFWithCLP'
 import { MetricTitleWithHelp } from '@/components/MetricHelp'
@@ -36,9 +37,23 @@ const paymentStatusLabels: Record<string, string> = {
   overdue: 'Vencido',
 }
 
+function formatCLPDual(clp: number, ufValue: number | undefined) {
+  const primary = formatCurrency(clp)
+  if (!ufValue || ufValue <= 0) return primary
+  return `${primary} (≈ ${formatUF(clp / ufValue)})`
+}
+
+function formatUFDual(ufAmount: number, ufValue: number | undefined) {
+  const primary = formatUF(ufAmount)
+  if (!ufValue) return primary
+  return `${primary} (≈ ${formatCurrency(ufAmount * ufValue)})`
+}
+
 export function DashboardPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const { data: uf } = useUF()
+  const ufValue = uf?.value
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => api.getDashboard(),
@@ -297,28 +312,34 @@ export function DashboardPage() {
                       innerRadius={60}
                       outerRadius={90}
                       dataKey="value"
-                      label={({ name, value }) => `${name}: ${formatCurrency(value)}`}
+                      label={({ name, value }) => `${name}: ${formatCLPDual(value, ufValue)}`}
                     >
                       <Cell fill="#10b981" />
                       <Cell fill="#f59e0b" />
                     </Pie>
-                    <Tooltip formatter={(v: number) => formatCurrency(v)} />
+                    <Tooltip formatter={(v: number) => formatCLPDual(v, ufValue)} />
                   </PieChart>
                 </ResponsiveContainer>
-                <div className="flex flex-wrap justify-center gap-4 text-sm mt-2">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                    {t('dashboard.rentPaid')}: {formatCurrency(rentPaid)}
-                    {(data?.total_rent_paid_count ?? 0) > 0 && (
-                      <span className="text-muted-foreground">({data?.total_rent_paid_count})</span>
-                    )}
+                <div className="flex flex-wrap justify-center gap-6 text-sm mt-2">
+                  <span className="inline-flex items-start gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 mt-1 shrink-0" />
+                    <span>
+                      <span className="text-muted-foreground">{t('dashboard.rentPaid')}: </span>
+                      <CLPWithUF amount={rentPaid} valueClassName="font-medium text-sm" />
+                      {(data?.total_rent_paid_count ?? 0) > 0 && (
+                        <span className="text-muted-foreground"> ({data?.total_rent_paid_count})</span>
+                      )}
+                    </span>
                   </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
-                    {t('dashboard.rentPending')}: {formatCurrency(rentPending)}
-                    {(data?.total_rent_pending_count ?? 0) > 0 && (
-                      <span className="text-muted-foreground">({data?.total_rent_pending_count})</span>
-                    )}
+                  <span className="inline-flex items-start gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-full bg-amber-500 mt-1 shrink-0" />
+                    <span>
+                      <span className="text-muted-foreground">{t('dashboard.rentPending')}: </span>
+                      <CLPWithUF amount={rentPending} valueClassName="font-medium text-sm" />
+                      {(data?.total_rent_pending_count ?? 0) > 0 && (
+                        <span className="text-muted-foreground"> ({data?.total_rent_pending_count})</span>
+                      )}
+                    </span>
                   </span>
                 </div>
               </>
@@ -354,28 +375,34 @@ export function DashboardPage() {
                       innerRadius={60}
                       outerRadius={90}
                       dataKey="value"
-                      label={({ name, value }) => `${name}: ${formatUF(value)}`}
+                      label={({ name, value }) => `${name}: ${formatUFDual(value, ufValue)}`}
                     >
                       <Cell fill="#3b82f6" />
                       <Cell fill="#f59e0b" />
                     </Pie>
-                    <Tooltip formatter={(v: number) => formatUF(v)} />
+                    <Tooltip formatter={(v: number) => formatUFDual(v, ufValue)} />
                   </PieChart>
                 </ResponsiveContainer>
-                <div className="flex flex-wrap justify-center gap-4 text-sm mt-2">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-2.5 w-2.5 rounded-full bg-blue-500" />
-                    {t('dashboard.dividendsPaid')}: {formatUF(dividendPaid)}
-                    {(data?.total_dividend_paid_count ?? 0) > 0 && (
-                      <span className="text-muted-foreground">({data?.total_dividend_paid_count})</span>
-                    )}
+                <div className="flex flex-wrap justify-center gap-6 text-sm mt-2">
+                  <span className="inline-flex items-start gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-full bg-blue-500 mt-1 shrink-0" />
+                    <span>
+                      <span className="text-muted-foreground">{t('dashboard.dividendsPaid')}: </span>
+                      <UFWithCLP amount={dividendPaid} valueClassName="font-medium text-sm" />
+                      {(data?.total_dividend_paid_count ?? 0) > 0 && (
+                        <span className="text-muted-foreground"> ({data?.total_dividend_paid_count})</span>
+                      )}
+                    </span>
                   </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
-                    {t('dashboard.dividendsPending')}: {formatUF(dividendPending)}
-                    {(data?.total_dividend_pending_count ?? 0) > 0 && (
-                      <span className="text-muted-foreground">({data?.total_dividend_pending_count})</span>
-                    )}
+                  <span className="inline-flex items-start gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-full bg-amber-500 mt-1 shrink-0" />
+                    <span>
+                      <span className="text-muted-foreground">{t('dashboard.dividendsPending')}: </span>
+                      <UFWithCLP amount={dividendPending} valueClassName="font-medium text-sm" />
+                      {(data?.total_dividend_pending_count ?? 0) > 0 && (
+                        <span className="text-muted-foreground"> ({data?.total_dividend_pending_count})</span>
+                      )}
+                    </span>
                   </span>
                 </div>
               </>

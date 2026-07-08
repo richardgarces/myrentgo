@@ -1,5 +1,5 @@
 # MyRent Go API — build: docker build -t myrent-api ./backend
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25.11-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache git ca-certificates
 COPY go.mod go.sum ./

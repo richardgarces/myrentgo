@@ -14,6 +14,14 @@ type Config struct {
 	Security SecurityConfig
 	Storage  StorageConfig
 	Notify   NotifyConfig
+	System   SystemConfig
+}
+
+type SystemConfig struct {
+	LogMaxEntries      int
+	MetricsEnabled     bool
+	MetricsProtected   bool
+	MetricsRefreshSecs int
 }
 
 type AppConfig struct {
@@ -40,6 +48,8 @@ type SecurityConfig struct {
 	BcryptCost       int
 	RateLimitRPS     float64
 	RateLimitBurst   int
+	LoginRateLimit   int
+	LoginRateWindow  time.Duration
 	MFAEnabled       bool
 	AllowedOrigins   []string
 	CSPPolicy        string
@@ -65,10 +75,11 @@ type NotifyConfig struct {
 }
 
 func Load() *Config {
+	appEnv := getEnv("APP_ENV", "development")
 	return &Config{
 		App: AppConfig{
 			Name:        getEnv("APP_NAME", "MyRent Go"),
-			Env:         getEnv("APP_ENV", "development"),
+			Env:         appEnv,
 			Port:        getEnv("APP_PORT", "7070"),
 			FrontendURL: getEnv("FRONTEND_URL", "http://localhost:5173"),
 			BaseURL:     getEnv("BASE_URL", "http://localhost:7070"),
@@ -84,17 +95,19 @@ func Load() *Config {
 			Issuer:     getEnv("JWT_ISSUER", "my-rent-go"),
 		},
 		Security: SecurityConfig{
-			BcryptCost:     getIntEnv("BCRYPT_COST", 12),
-			RateLimitRPS:   getFloatEnv("RATE_LIMIT_RPS", 10),
-			RateLimitBurst: getIntEnv("RATE_LIMIT_BURST", 20),
-			MFAEnabled:     getBoolEnv("MFA_ENABLED", true),
+			BcryptCost:      getIntEnv("BCRYPT_COST", 12),
+			RateLimitRPS:    getFloatEnv("RATE_LIMIT_RPS", 10),
+			RateLimitBurst:  getIntEnv("RATE_LIMIT_BURST", 20),
+			LoginRateLimit:  getIntEnv("LOGIN_RATE_LIMIT", 5),
+			LoginRateWindow: getDurationEnv("LOGIN_RATE_WINDOW", time.Minute),
+			MFAEnabled:      getBoolEnv("MFA_ENABLED", true),
 			AllowedOrigins: strings.Split(getEnv("CORS_ORIGINS", "http://localhost:4000,http://localhost:5173"), ","),
 			CSPPolicy: getEnv("CSP_POLICY",
 				"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' ws: wss:;"),
 		},
 		Storage: StorageConfig{
 			DocumentsPath: getEnv("DOCUMENTS_PATH", "./storage/documents"),
-			MaxUploadMB:   int64(getIntEnv("MAX_UPLOAD_MB", 25)),
+			MaxUploadMB:   int64(getIntEnv("MAX_UPLOAD_MB", 30)),
 		},
 		Notify: NotifyConfig{
 			SMTPHost:      getEnv("SMTP_HOST", ""),
@@ -108,6 +121,12 @@ func Load() *Config {
 			WhatsAppAPI:   getEnv("WHATSAPP_API_URL", ""),
 			SchedulerEnabled:  getBoolEnv("EMAIL_SCHEDULER_ENABLED", true),
 			SchedulerInterval: getDurationEnv("EMAIL_SCHEDULER_INTERVAL", 24*time.Hour),
+		},
+		System: SystemConfig{
+			LogMaxEntries:      getIntEnv("SYSTEM_LOG_MAX_ENTRIES", 5000),
+			MetricsEnabled:     getBoolEnv("METRICS_ENABLED", true),
+			MetricsProtected:   getBoolEnv("METRICS_PROTECTED", appEnv == "production"),
+			MetricsRefreshSecs: getIntEnv("METRICS_REFRESH_INTERVAL_SECS", 60),
 		},
 	}
 }

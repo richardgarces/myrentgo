@@ -10,6 +10,8 @@ import (
 	appproperty "github.com/richard/my-rent-go/internal/application/property"
 	domainorg "github.com/richard/my-rent-go/internal/domain/organization"
 	domain "github.com/richard/my-rent-go/internal/domain/property"
+	"github.com/richard/my-rent-go/internal/infrastructure/syslog"
+	"github.com/richard/my-rent-go/internal/infrastructure/metrics"
 	"github.com/richard/my-rent-go/internal/interfaces/http/middleware"
 )
 
@@ -49,6 +51,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
+	syslog.LogInfo(syslog.CategoryUser, "organization registered", "email", cmd.Email, "org_name", cmd.OrgName)
 	c.JSON(http.StatusCreated, tokens)
 }
 
@@ -68,10 +71,33 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 	tokens, err := h.auth.Login(c.Request.Context(), cmd)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+		metrics.RecordLogin(false)
+		syslog.LogLoginFailed(cmd.Email, err.Error())
+		status := http.StatusUnauthorized
+		errMsg := "invalid credentials"
+		if err == auth.ErrUserInactive {
+			status = http.StatusForbidden
+			errMsg = "user inactive"
+		}
+		if err == auth.ErrEmailNotVerified {
+			status = http.StatusForbidden
+			errMsg = "email_not_verified"
+		}
+		c.JSON(status, gin.H{"error": errMsg})
 		return
 	}
-	c.JSON(http.StatusOK, tokens)
+	if tokens.MFARequired {
+		metrics.RecordLogin(true)
+		syslog.LogLoginMFARequired(cmd.Email, "")
+		c.JSON(http.StatusOK, gin.H{
+			"mfa_required": true,
+			"mfa_token":    tokens.MFAToken,
+		})
+		return
+	}
+	metrics.RecordLogin(true)
+	syslog.LogLoginSuccess(cmd.Email, "", middleware.GetOrgID(c))
+	c.JSON(http.StatusOK, tokens.Tokens)
 }
 
 // Me godoc
@@ -101,6 +127,7 @@ func (h *AuthHandler) Me(c *gin.Context) {
 		"phone":         user.Phone,
 		"avatar_url":    user.AvatarURL,
 		"active":        user.Active,
+		"email_verified": user.EmailVerified,
 		"mfa_enabled":   user.MFAEnabled,
 		"organizations": user.Organizations,
 		"preferences":   user.Preferences,

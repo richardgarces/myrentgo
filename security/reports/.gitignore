@@ -1,0 +1,3 @@
+# Ignore generated pentest reports (may contain tokens/snippets)
+*
+!.gitignore

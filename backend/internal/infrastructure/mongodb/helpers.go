@@ -20,8 +20,10 @@ func listByOrg[T any](ctx context.Context, col *mongo.Collection, orgID string, 
 	if p.Page < 1 {
 		p.Page = 1
 	}
-	if p.Limit < 1 || p.Limit > 100 {
+	if p.Limit < 1 {
 		p.Limit = 20
+	} else if p.Limit > 500 {
+		p.Limit = 500
 	}
 
 	query := bson.M{"organization_id": orgID}

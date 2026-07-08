@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
+import { AppLogo } from '@/components/layout/AppLogo'
 import {
   Building2, Calendar, CreditCard, FileText, LayoutDashboard,
   Menu, Moon, Settings, Sun, Users, Wrench, X, Briefcase, Ticket, BarChart3, Bell, Download, Landmark,
@@ -49,8 +50,7 @@ export function AppLayout() {
   const Sidebar = () => (
     <aside className="flex h-full w-64 flex-col border-r bg-card">
       <div className="flex h-16 items-center border-b px-6">
-        <Building2 className="h-6 w-6 mr-2" />
-        <span className="font-semibold">{t('app.name')}</span>
+        <AppLogo size="sm" showText name={t('app.name')} />
       </div>
       <nav className="flex-1 overflow-y-auto p-4 space-y-1">
         {navItems.map(({ to, icon: Icon, key }) => (

@@ -1,0 +1,65 @@
+# MyRent Go — reglas SAST locales para security/run-pentest.sh (semgrep).
+# Uso: semgrep scan --config security/semgrep.yml backend frontend/src
+
+rules:
+  - id: go-tls-insecure-skip-verify
+    languages: [go]
+    message: TLS InsecureSkipVerify habilitado — riesgo MITM
+    severity: ERROR
+    pattern: InsecureSkipVerify: true
+
+  - id: go-hardcoded-jwt-secret
+    languages: [go]
+    message: Posible secreto JWT hardcodeado
+    severity: WARNING
+    patterns:
+      - pattern-either:
+          - pattern: 'Secret: "$VALUE"'
+          - pattern: 'secret = "$VALUE"'
+      - metavariable-regex:
+          metavariable: $VALUE
+          regex: .{8,}
+
+  - id: go-sql-concat
+    languages: [go]
+    message: Posible SQL por concatenación — preferir parámetros
+    severity: WARNING
+    pattern: fmt.Sprintf("... $SQL ...", ...)
+    metavariable-regex:
+      metavariable: $SQL
+      regex: (?i)(select|insert|update|delete)
+
+  - id: react-dangerously-set-innerhtml
+    languages: [javascript, typescript]
+    message: dangerouslySetInnerHTML puede introducir XSS
+    severity: WARNING
+    pattern: dangerouslySetInnerHTML={{...}}
+
+  - id: react-eval
+    languages: [javascript, typescript]
+    message: eval() es inseguro
+    severity: ERROR
+    pattern: eval(...)
+
+  - id: js-innerhtml-assignment
+    languages: [javascript, typescript]
+    message: Asignación directa a innerHTML
+    severity: WARNING
+    pattern: $EL.innerHTML = ...
+
+  - id: go-weak-rand
+    languages: [go]
+    message: math/rand no es criptográficamente seguro para tokens
+    severity: INFO
+    pattern: rand.Intn(...)
+
+  - id: go-no-error-check-http
+    languages: [go]
+    message: Respuesta HTTP sin comprobar err
+    severity: INFO
+    patterns:
+      - pattern: |
+          $RESP, $ERR := http.$METHOD(...)
+          ...
+      - pattern-not-inside: |
+          if $ERR != nil { ... }

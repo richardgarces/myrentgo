@@ -13,6 +13,7 @@ const (
 	TypePaymentOverdue  Type = "payment_overdue"
 	TypeLateInterest    Type = "late_interest"
 	TypeMaintenanceDue  Type = "maintenance_due"
+	TypeLeaseExpiring   Type = "lease_expiring"
 )
 
 type Channel string
@@ -60,4 +61,21 @@ func NewNotification(orgID, tenantID, title, message string, nType Type, channel
 		Status:         StatusPending,
 		ScheduledAt:    scheduledAt,
 	}
+}
+
+func (n *Notification) MarkFailed(reason string) {
+	if n.Metadata == nil {
+		n.Metadata = make(map[string]string)
+	}
+	n.Status = StatusFailed
+	n.SentAt = nil
+	n.Metadata["error_message"] = reason
+}
+
+func (n *Notification) MarkSent(sentAt time.Time) {
+	if n.Metadata != nil {
+		delete(n.Metadata, "error_message")
+	}
+	n.Status = StatusSent
+	n.SentAt = &sentAt
 }

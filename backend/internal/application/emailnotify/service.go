@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	domainer "github.com/richard/my-rent-go/internal/domain/emailrecipient"
 	domainnotif "github.com/richard/my-rent-go/internal/domain/notification"
 	"github.com/richard/my-rent-go/internal/infrastructure/email"
 	"github.com/richard/my-rent-go/internal/infrastructure/mongodb"
@@ -21,6 +20,7 @@ type Service struct {
 	maintenance   *mongodb.MaintenanceRepo
 	tenants       *mongodb.TenantRepo
 	properties    *mongodb.PropertyRepo
+	leases        *mongodb.LeaseRepo
 }
 
 func NewService(
@@ -32,6 +32,7 @@ func NewService(
 	maintenance *mongodb.MaintenanceRepo,
 	tenants *mongodb.TenantRepo,
 	properties *mongodb.PropertyRepo,
+	leases *mongodb.LeaseRepo,
 ) *Service {
 	return &Service{
 		mailer:        mailer,
@@ -42,6 +43,7 @@ func NewService(
 		maintenance:   maintenance,
 		tenants:       tenants,
 		properties:    properties,
+		leases:        leases,
 	}
 }
 
@@ -67,7 +69,10 @@ func (s *Service) SendTest(ctx context.Context, orgID, recipientID, emailAddr st
 			return nil, fmt.Errorf("recipient not found")
 		}
 		name = rec.Name
-		to = rec.Email
+		to, err = s.ResolveRecipientEmail(ctx, orgID, rec)
+		if err != nil {
+			return nil, err
+		}
 	} else if emailAddr != "" {
 		to = strings.TrimSpace(emailAddr)
 	} else {
@@ -119,29 +124,19 @@ func (s *Service) SendNotification(ctx context.Context, orgID, notificationID st
 	if n.Channel != domainnotif.ChannelEmail {
 		return nil, fmt.Errorf("notification channel is not email")
 	}
-	if n.Status != domainnotif.StatusPending {
-		return nil, fmt.Errorf("notification is not pending")
+	if n.Status != domainnotif.StatusPending && n.Status != domainnotif.StatusFailed {
+		return nil, fmt.Errorf("notification cannot be sent")
 	}
 	return s.sendOne(ctx, orgID, n)
 }
 
 func (s *Service) sendOne(ctx context.Context, orgID string, n *domainnotif.Notification) (*SendResult, error) {
-	recs, err := s.recipients.ListEnabledForType(ctx, orgID, domainer.NotificationType(n.Type))
+	emails, err := s.resolveNotificationRecipients(ctx, orgID, n)
 	if err != nil {
-		return nil, err
-	}
-	if len(recs) == 0 {
-		return nil, fmt.Errorf("no enabled recipients for type %s", n.Type)
-	}
-
-	emails := make([]string, 0, len(recs))
-	for _, r := range recs {
-		if addr := strings.TrimSpace(r.Email); addr != "" {
-			emails = append(emails, addr)
-		}
-	}
-	if len(emails) == 0 {
-		return nil, fmt.Errorf("no valid email addresses configured")
+		errMsg := err.Error()
+		n.MarkFailed(errMsg)
+		_ = s.notifications.Update(ctx, n)
+		return &SendResult{FailedCount: 1, Errors: []string{errMsg}}, err
 	}
 
 	subject, htmlBody, textBody := email.RenderNotification(n.Title, n.Title, n.Message, string(n.Type))
@@ -155,6 +150,14 @@ func (s *Service) sendOne(ctx context.Context, orgID string, n *domainnotif.Noti
 		}
 		subject, htmlBody, textBody = email.RenderMaintenanceNotification(n.Title, n.Message, ctxData)
 	}
+	if n.Type == domainnotif.TypeLeaseExpiring {
+		ctxData := email.LeaseExpiringContext{
+			TenantName:   n.Metadata["tenant_name"],
+			PropertyName: n.Metadata["property_name"],
+			EndDate:      formatLeaseEndDateDisplay(n.Metadata["end_date"]),
+		}
+		subject, htmlBody, textBody = email.RenderLeaseExpiringNotification(n.Title, n.Message, ctxData)
+	}
 	sendErr := s.mailer.Send(ctx, email.Message{
 		To:       emails,
 		Subject:  subject,
@@ -164,14 +167,12 @@ func (s *Service) sendOne(ctx context.Context, orgID string, n *domainnotif.Noti
 
 	now := time.Now().UTC()
 	if sendErr != nil {
-		n.Status = domainnotif.StatusFailed
-		n.SentAt = nil
+		n.MarkFailed(sendErr.Error())
 		_ = s.notifications.Update(ctx, n)
 		return &SendResult{FailedCount: 1, Errors: []string{sendErr.Error()}}, sendErr
 	}
 
-	n.Status = domainnotif.StatusSent
-	n.SentAt = &now
+	n.MarkSent(now)
 	if err := s.notifications.Update(ctx, n); err != nil {
 		return &SendResult{SentCount: len(emails), Recipients: emails}, err
 	}

@@ -1,14 +1,19 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus } from 'lucide-react'
+import { DataCardGrid, DataListItem, DataListShell } from '@/components/DataListViews'
+import { ViewModeToggle } from '@/components/ViewModeToggle'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FormDialog, FormField, FormSelect } from '@/components/ui/form-dialog'
 import { Input } from '@/components/ui/input'
 import { PinConfirmDialog } from '@/components/ui/pin-confirm-dialog'
 import { EmptyState, LoadingSkeleton, StatusBadge } from '@/components/ui/page'
-import { api, type Lease, type Property } from '@/lib/api'
+import { useViewMode } from '@/hooks/useViewMode'
+import { api, type Lease, type Property, type TenantNotification } from '@/lib/api'
+import { formatNotificationError } from '@/lib/notification-errors'
 import { formatDate } from '@/lib/utils'
+import { NoRecipientsBanner } from '@/pages/notifications/NoRecipientsBanner'
 
 const leaseStatusLabels: Record<string, string> = {
   active: 'Arriendo activo',
@@ -35,13 +40,21 @@ const typeLabels: Record<string, string> = {
   payment_due: 'Aviso de pago',
   payment_overdue: 'Pago atrasado',
   late_interest: 'Intereses por mora',
+  maintenance_due: 'Recordatorio de mantención',
 }
 
 const channelLabels: Record<string, string> = {
-  email: 'Email',
+  email: 'Correo electrónico',
   whatsapp: 'WhatsApp',
   sms: 'SMS',
   manual: 'Manual',
+}
+
+const statusLabels: Record<string, string> = {
+  pending: 'Pendiente',
+  sent: 'Enviado',
+  failed: 'Fallido',
+  cancelled: 'Cancelada',
 }
 
 export function HistorialTab() {
@@ -59,6 +72,7 @@ export function HistorialTab() {
     scheduled_at: '',
   })
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const queryFilters = useMemo(
     () => ({
@@ -91,6 +105,8 @@ export function HistorialTab() {
   const formatTenantName = (tenantId: string, metadata?: Record<string, string>) => {
     const fromMeta = metadata?.tenant_name?.trim()
     if (fromMeta) return fromMeta
+    if (metadata?.maintenance_title?.trim()) return metadata.maintenance_title
+    if (metadata?.property_name?.trim()) return metadata.property_name
     const tenant = tenantById.get(tenantId)
     if (tenant) return `${tenant.first_name} ${tenant.last_name}`.trim()
     return '—'
@@ -139,6 +155,15 @@ export function HistorialTab() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }),
   })
 
+  const sendNow = useMutation({
+    mutationFn: (id: string) => api.sendNotification(id),
+    onSuccess: () => {
+      setActionError(null)
+      qc.invalidateQueries({ queryKey: ['notifications'] })
+    },
+    onError: (err: Error) => setActionError(formatNotificationError(err.message) ?? err.message),
+  })
+
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteNotification(id),
     onSuccess: () => {
@@ -147,6 +172,40 @@ export function HistorialTab() {
       setSelectedId(null)
     },
   })
+
+  const [viewMode, setViewMode] = useViewMode('notifications-historial', 'tabla')
+  const notifications = data?.data ?? []
+
+  const notificationActions = (n: TenantNotification) => (
+    <div className="flex flex-wrap gap-2 justify-end">
+      {n.channel === 'email' && (n.status === 'pending' || n.status === 'failed') && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => sendNow.mutate(n.id)}
+          disabled={sendNow.isPending}
+        >
+          {n.status === 'failed' ? 'Reenviar' : 'Enviar ahora'}
+        </Button>
+      )}
+      {n.status === 'pending' && (
+        <>
+          <Button size="sm" variant="outline" onClick={() => markSent.mutate(n.id)}>Marcar enviada</Button>
+          <Button size="sm" variant="outline" onClick={() => cancel.mutate(n.id)}>Cancelar</Button>
+        </>
+      )}
+      <Button
+        size="sm"
+        variant="destructive"
+        onClick={() => {
+          setSelectedId(n.id)
+          setConfirmDelete(true)
+        }}
+      >
+        Eliminar
+      </Button>
+    </div>
+  )
 
   if (isLoading && !data) return <LoadingSkeleton />
 
@@ -159,6 +218,10 @@ export function HistorialTab() {
         </Button>
       </div>
 
+      {actionError && (
+        <NoRecipientsBanner message={actionError} />
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Filtros</CardTitle>
@@ -169,13 +232,14 @@ export function HistorialTab() {
             <option value="pending">Pendiente</option>
             <option value="sent">Enviado</option>
             <option value="failed">Fallido</option>
-            <option value="cancelled">Cancelado</option>
+            <option value="cancelled">Cancelada</option>
           </FormSelect>
           <FormSelect value={filters.type} onChange={(e) => setFilters((p) => ({ ...p, type: e.target.value }))}>
             <option value="">Tipo: todos</option>
             <option value="payment_due">Aviso de pago</option>
             <option value="payment_overdue">Pago atrasado</option>
             <option value="late_interest">Intereses por mora</option>
+            <option value="maintenance_due">Recordatorio de mantención</option>
           </FormSelect>
           <FormSelect value={filters.tenant_id} onChange={(e) => setFilters((p) => ({ ...p, tenant_id: e.target.value }))}>
             <option value="">Arrendatario: todos</option>
@@ -211,12 +275,56 @@ export function HistorialTab() {
       </Card>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
           <CardTitle className="text-base">Historial de notificaciones</CardTitle>
+          {notifications.length > 0 && (
+            <ViewModeToggle value={viewMode} onChange={setViewMode} />
+          )}
         </CardHeader>
-        <CardContent className="p-0">
-          {!data?.data.length ? (
+        <CardContent className={viewMode === 'tabla' ? 'p-0' : undefined}>
+          {!notifications.length ? (
             <EmptyState message="Sin notificaciones registradas." />
+          ) : viewMode === 'tarjetas' ? (
+            <DataCardGrid>
+              {notifications.map((n) => (
+                <Card key={n.id}>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <CardTitle className="text-base">{n.title}</CardTitle>
+                      <StatusBadge status={n.status} label={statusLabels[n.status] ?? n.status} />
+                    </div>
+                    <p className="text-xs text-muted-foreground">{typeLabels[n.type] || n.type}</p>
+                  </CardHeader>
+                  <CardContent className="space-y-2 text-sm text-muted-foreground">
+                    <p>{formatTenantName(n.tenant_id, n.metadata)}</p>
+                    <p>{channelLabels[n.channel] || n.channel}</p>
+                    <p>Registrada: {formatDate(n.created_at)}</p>
+                    {notificationActions(n)}
+                  </CardContent>
+                </Card>
+              ))}
+            </DataCardGrid>
+          ) : viewMode === 'lista' ? (
+            <DataListShell>
+              {notifications.map((n) => (
+                <DataListItem key={n.id} className="justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium">{n.title}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {typeLabels[n.type] || n.type}
+                      {' · '}
+                      {formatTenantName(n.tenant_id, n.metadata)}
+                      {' · '}
+                      {formatDate(n.created_at)}
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-end gap-2 shrink-0">
+                    <StatusBadge status={n.status} label={statusLabels[n.status] ?? n.status} />
+                    {notificationActions(n)}
+                  </div>
+                </DataListItem>
+              ))}
+            </DataListShell>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -233,35 +341,28 @@ export function HistorialTab() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.data.map((n) => (
+                  {notifications.map((n) => (
                     <tr key={n.id} className="border-b hover:bg-muted/50">
                       <td className="p-4">{typeLabels[n.type] || n.type}</td>
                       <td className="p-4">{formatTenantName(n.tenant_id, n.metadata)}</td>
                       <td className="p-4">{n.title}</td>
                       <td className="p-4">{channelLabels[n.channel] || n.channel}</td>
-                      <td className="p-4"><StatusBadge status={n.status} /></td>
-                      <td className="p-4">{formatDate(n.created_at)}</td>
-                      <td className="p-4">{n.sent_at ? formatDate(n.sent_at) : '—'}</td>
                       <td className="p-4">
-                        <div className="flex flex-wrap gap-2 justify-end">
-                          {n.status === 'pending' && (
-                            <>
-                              <Button size="sm" variant="outline" onClick={() => markSent.mutate(n.id)}>Marcar enviada</Button>
-                              <Button size="sm" variant="outline" onClick={() => cancel.mutate(n.id)}>Cancelar</Button>
-                            </>
+                        <div className="space-y-1">
+                          <StatusBadge status={n.status} label={statusLabels[n.status] ?? n.status} />
+                          {n.status === 'failed' && formatNotificationError(n.metadata?.error_message) && (
+                            <p
+                              className="text-xs text-muted-foreground max-w-[220px]"
+                              title={formatNotificationError(n.metadata?.error_message)}
+                            >
+                              {formatNotificationError(n.metadata?.error_message)}
+                            </p>
                           )}
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => {
-                              setSelectedId(n.id)
-                              setConfirmDelete(true)
-                            }}
-                          >
-                            Eliminar
-                          </Button>
                         </div>
                       </td>
+                      <td className="p-4">{formatDate(n.created_at)}</td>
+                      <td className="p-4">{n.sent_at ? formatDate(n.sent_at) : '—'}</td>
+                      <td className="p-4">{notificationActions(n)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -324,11 +425,12 @@ export function HistorialTab() {
             <option value="payment_due">Aviso de pago</option>
             <option value="payment_overdue">Pago atrasado</option>
             <option value="late_interest">Intereses por mora</option>
+            <option value="maintenance_due">Recordatorio de mantención</option>
           </FormSelect>
         </FormField>
         <FormField label="Canal">
           <FormSelect value={form.channel} onChange={(e) => setForm((p) => ({ ...p, channel: e.target.value }))}>
-            <option value="email">Email</option>
+            <option value="email">Correo electrónico</option>
             <option value="whatsapp">WhatsApp</option>
             <option value="sms">SMS</option>
             <option value="manual">Manual</option>
@@ -353,9 +455,11 @@ export function HistorialTab() {
             onChange={(e) => setForm((p) => ({ ...p, scheduled_at: e.target.value }))}
           />
         </FormField>
-        {(create.error || markSent.error || cancel.error || remove.error) && (
+        {(create.error || markSent.error || cancel.error || sendNow.error || remove.error) && (
           <p className="text-sm text-destructive">
-            {((create.error || markSent.error || cancel.error || remove.error) as Error).message}
+            {formatNotificationError(
+              ((create.error || markSent.error || cancel.error || sendNow.error || remove.error) as Error).message,
+            )}
           </p>
         )}
       </FormDialog>

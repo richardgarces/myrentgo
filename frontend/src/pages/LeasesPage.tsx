@@ -1,20 +1,28 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useSearchParams } from 'react-router-dom'
-import { Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+import { FileText, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+import { DataCardGrid, DataListItem, DataListShell } from '@/components/DataListViews'
+import { ViewModeToggle } from '@/components/ViewModeToggle'
+import { DocumentActions } from '@/components/DocumentActions'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FormDialog, FormField, FormSelect } from '@/components/ui/form-dialog'
 import { Input } from '@/components/ui/input'
 import { PinConfirmDialog } from '@/components/ui/pin-confirm-dialog'
 import { EmptyState, LoadingSkeleton, StatusBadge } from '@/components/ui/page'
-import { api, type Lease, type Property } from '@/lib/api'
+import { useViewMode } from '@/hooks/useViewMode'
+import { api, type Document as LeaseDocument, type Lease, type Property } from '@/lib/api'
+import { invalidateAfterMutation } from '@/lib/query-options'
+import { leaseDocumentCategoryLabels, mimeFromDataUrl, validateDocumentFileSize, DOCUMENT_UPLOAD_HINT } from '@/lib/document-utils'
+import { computeLeaseTiming, formatElapsedLabel } from '@/lib/lease-duration'
 import { formatCurrency, formatDate, propertyLinkLabel } from '@/lib/utils'
 
 const emptyForm = {
   property_id: '', tenant_id: '', start_date: '', end_date: '',
   monthly_rent: '', ipc_adjustment: true, payment_day: '5',
+  auto_renew: true, renewal_period_months: '12',
   include_warehouse: false, include_parking: false,
 }
 
@@ -25,6 +33,213 @@ const leaseStatusLabels: Record<string, string> = {
   terminated: 'Terminado',
   draft: 'Borrador',
   expired: 'Expirado',
+}
+
+type PendingDocument = {
+  localId: string
+  title: string
+  category: string
+  file_name: string
+  file_data: string
+  mime_type: string
+  size_bytes: number
+}
+
+function FormSection({ title }: { title: string }) {
+  return <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground pt-2 border-t">{title}</p>
+}
+
+function LeaseDocumentsSection({
+  leaseId,
+  pendingDocs,
+  onPendingChange,
+}: {
+  leaseId: string | null
+  pendingDocs: PendingDocument[]
+  onPendingChange: (docs: PendingDocument[]) => void
+}) {
+  const qc = useQueryClient()
+  const titleInputRef = useRef<HTMLInputElement>(null)
+  const [title, setTitle] = useState('')
+  const [category, setCategory] = useState('contract')
+  const [fileError, setFileError] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  const currentTitle = () => (titleInputRef.current?.value ?? title).trim()
+
+  const { data: existingDocs, refetch } = useQuery({
+    queryKey: ['documents', 'lease', leaseId],
+    queryFn: () => api.getDocuments(1, { lease_id: leaseId!, omit_file_data: true }),
+    enabled: !!leaseId,
+  })
+
+  const readFile = (file: File, docTitle: string, docCategory: string): Promise<PendingDocument> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const file_data = reader.result as string
+        resolve({
+          localId: crypto.randomUUID(),
+          title: docTitle,
+          category: docCategory,
+          file_name: file.name,
+          file_data,
+          mime_type: mimeFromDataUrl(file_data),
+          size_bytes: file.size,
+        })
+      }
+      reader.onerror = () => reject(reader.error)
+      reader.readAsDataURL(file)
+    })
+
+  const resetForm = () => {
+    setTitle('')
+    setCategory('contract')
+    setFileError(null)
+  }
+
+  const addDocument = async (file: File) => {
+    const docTitle = currentTitle()
+    if (!docTitle) {
+      setFileError('Ingresa el nombre del documento')
+      return
+    }
+    const sizeError = validateDocumentFileSize(file)
+    if (sizeError) {
+      setFileError(sizeError)
+      return
+    }
+    setFileError(null)
+    setAdding(true)
+    try {
+      const doc = await readFile(file, docTitle, category)
+      if (leaseId) {
+        await api.createDocument({
+          entity_type: 'lease',
+          entity_id: leaseId,
+          category: doc.category,
+          title: doc.title,
+          file_name: doc.file_name,
+          file_data: doc.file_data,
+          mime_type: doc.mime_type,
+          size_bytes: doc.size_bytes,
+        })
+        await refetch()
+        qc.invalidateQueries({ queryKey: ['documents'] })
+      } else {
+        onPendingChange([...pendingDocs, doc])
+      }
+      resetForm()
+    } catch (err) {
+      setFileError((err as Error).message)
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  const deleteExisting = async (doc: LeaseDocument) => {
+    setDeletingId(doc.id)
+    try {
+      await api.deleteDocument(doc.id)
+      await refetch()
+      qc.invalidateQueries({ queryKey: ['documents'] })
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  const docs = existingDocs?.data ?? []
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <FormField label="Nombre del documento">
+          <Input
+            ref={titleInputRef}
+            value={title}
+            onChange={(e) => {
+              setTitle(e.target.value)
+              if (fileError) setFileError(null)
+            }}
+            placeholder="Ej: Contrato firmado 2026"
+          />
+        </FormField>
+        <FormField label="Categoría">
+          <FormSelect value={category} onChange={(e) => { setCategory(e.target.value); if (fileError) setFileError(null) }}>
+            <option value="contract">Contrato de arriendo</option>
+            <option value="annex">Anexo</option>
+            <option value="other">Otro</option>
+          </FormSelect>
+        </FormField>
+      </div>
+      <div className="flex items-center gap-2">
+        <label className="cursor-pointer">
+          <input
+            type="file"
+            accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,image/*"
+            className="sr-only"
+            disabled={adding}
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) void addDocument(file)
+              e.target.value = ''
+            }}
+          />
+          <span className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm hover:bg-muted transition-colors">
+            {adding ? 'Subiendo…' : 'Seleccionar archivo'}
+          </span>
+        </label>
+        <p className="text-xs text-muted-foreground">{DOCUMENT_UPLOAD_HINT}</p>
+      </div>
+      {fileError && <p className="text-sm text-destructive">{fileError}</p>}
+
+      {(docs.length > 0 || pendingDocs.length > 0) && (
+        <ul className="space-y-2">
+          {docs.map((doc) => (
+            <li key={doc.id} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+              <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <p className="font-medium truncate">{doc.title}</p>
+                <p className="text-xs text-muted-foreground">
+                  {leaseDocumentCategoryLabels[doc.category] || doc.category} · {doc.file_name}
+                </p>
+              </div>
+              <DocumentActions doc={doc} variant="links" />
+              <button
+                type="button"
+                title="Eliminar documento"
+                disabled={deletingId === doc.id}
+                onClick={() => void deleteExisting(doc)}
+                className="p-1 rounded text-muted-foreground hover:text-destructive shrink-0"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </li>
+          ))}
+          {pendingDocs.map((doc) => (
+            <li key={doc.localId} className="flex items-center gap-2 rounded-md border border-dashed px-3 py-2 text-sm">
+              <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <p className="font-medium truncate">{doc.title}</p>
+                <p className="text-xs text-muted-foreground">
+                  {leaseDocumentCategoryLabels[doc.category] || doc.category} · {doc.file_name} (pendiente)
+                </p>
+              </div>
+              <button
+                type="button"
+                title="Quitar documento"
+                onClick={() => onPendingChange(pendingDocs.filter((d) => d.localId !== doc.localId))}
+                className="p-1 rounded text-muted-foreground hover:text-destructive shrink-0"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
 }
 
 type LeaseFilters = {
@@ -112,6 +327,8 @@ function leaseToForm(l: Lease): LeaseForm {
     monthly_rent: String(l.monthly_rent.amount),
     ipc_adjustment: l.ipc_adjustment,
     payment_day: String(l.payment_day),
+    auto_renew: l.auto_renew !== false,
+    renewal_period_months: String(l.renewal_period_months ?? 12),
     include_warehouse: Boolean(l.warehouse_property_id),
     include_parking: Boolean(l.parking_property_id),
   }
@@ -126,6 +343,8 @@ function formToPayload(form: LeaseForm, apartment?: Property) {
     monthly_rent: Number(form.monthly_rent),
     ipc_adjustment: form.ipc_adjustment,
     payment_day: Number(form.payment_day),
+    auto_renew: form.auto_renew,
+    renewal_period_months: Number(form.renewal_period_months) || 12,
     warehouse_property_id: form.include_warehouse && apartment?.warehouse_property_id
       ? apartment.warehouse_property_id
       : '',
@@ -209,6 +428,60 @@ function formatLeaseProperty(
   return `${main} (+ ${extras.join(', ')})`
 }
 
+function LeaseRenewalBadges({ lease }: { lease: Lease }) {
+  const badges: { key: string; label: string; className: string }[] = []
+  if ((lease.renewal_count ?? 0) > 0) {
+    badges.push({
+      key: 'renewed',
+      label: `Renovado automáticamente (${lease.renewal_count}×)`,
+      className: 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200',
+    })
+  } else if (lease.auto_renew !== false && lease.status === 'active') {
+    badges.push({
+      key: 'auto',
+      label: 'Renovación automática activa',
+      className: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200',
+    })
+  }
+  if (!badges.length) return null
+  return (
+    <div className="flex flex-wrap gap-1 mt-1">
+      {badges.map((b) => (
+        <span key={b.key} className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${b.className}`}>
+          {b.label}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function LeaseTimingDisplay({
+  lease,
+  preview,
+}: {
+  lease: Lease
+  preview?: {
+    start_date?: string
+    end_date?: string
+    auto_renew?: boolean
+    renewal_period_months?: number
+  }
+}) {
+  const timing = computeLeaseTiming({
+    start_date: preview?.start_date || lease.start_date,
+    end_date: preview?.end_date || lease.end_date,
+    auto_renew: preview?.auto_renew ?? lease.auto_renew,
+    renewal_count: lease.renewal_count,
+    renewal_period_months: preview?.renewal_period_months ?? lease.renewal_period_months,
+  })
+  return (
+    <div className="text-xs text-muted-foreground space-y-0.5 mt-1">
+      <div>Transcurrido: {formatElapsedLabel(timing)}</div>
+      <div>Faltante: {timing.remainingLabel}</div>
+    </div>
+  )
+}
+
 function LeaseFormFields({
   form,
   setForm,
@@ -217,6 +490,8 @@ function LeaseFormFields({
   mode,
   editingLeaseId,
   leases,
+  pendingDocuments,
+  onPendingDocumentsChange,
 }: {
   form: LeaseForm
   setForm: (form: LeaseForm) => void
@@ -225,6 +500,8 @@ function LeaseFormFields({
   mode: 'create' | 'edit'
   editingLeaseId?: string | null
   leases?: Lease[]
+  pendingDocuments: PendingDocument[]
+  onPendingDocumentsChange: (docs: PendingDocument[]) => void
 }) {
   const excludeLeaseId = mode === 'edit' ? editingLeaseId ?? undefined : undefined
   const currentPropertyId = mode === 'edit' ? form.property_id || undefined : undefined
@@ -340,6 +617,50 @@ function LeaseFormFields({
         <input type="checkbox" checked={form.ipc_adjustment} onChange={(e) => setForm({ ...form, ipc_adjustment: e.target.checked })} />
         Reajuste IPC
       </label>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={form.auto_renew} onChange={(e) => setForm({ ...form, auto_renew: e.target.checked })} />
+        Renovación automática
+      </label>
+      {form.auto_renew && (
+        <FormField label="Periodo de renovación (meses)">
+          <Input
+            type="number"
+            min={1}
+            max={120}
+            value={form.renewal_period_months}
+            onChange={(e) => setForm({ ...form, renewal_period_months: e.target.value })}
+          />
+        </FormField>
+      )}
+      {mode === 'edit' && editingLeaseId && (() => {
+        const lease = leases?.find((l) => l.id === editingLeaseId)
+        if (!lease) return null
+        return (
+          <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm space-y-1">
+            <LeaseRenewalBadges lease={lease} />
+            <LeaseTimingDisplay
+              lease={lease}
+              preview={{
+                start_date: form.start_date,
+                end_date: form.end_date,
+                auto_renew: form.auto_renew,
+                renewal_period_months: Number(form.renewal_period_months) || 12,
+              }}
+            />
+            {lease.last_renewed_at && (
+              <p className="text-xs text-muted-foreground">
+                Última renovación: {formatDate(lease.last_renewed_at)}
+              </p>
+            )}
+          </div>
+        )
+      })()}
+      <FormSection title="Documentos" />
+      <LeaseDocumentsSection
+        leaseId={mode === 'edit' ? editingLeaseId ?? null : null}
+        pendingDocs={pendingDocuments}
+        onPendingChange={onPendingDocumentsChange}
+      />
     </>
   )
 }
@@ -352,11 +673,16 @@ export function LeasesPage() {
   const [mode, setMode] = useState<'create' | 'edit'>('create')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState(emptyForm)
+  const [pendingDocuments, setPendingDocuments] = useState<PendingDocument[]>([])
   const [confirmTerminate, setConfirmTerminate] = useState(false)
 
   const { data, isLoading } = useQuery({ queryKey: ['leases'], queryFn: () => api.getLeases() })
   const { data: properties } = useQuery({ queryKey: ['properties'], queryFn: () => api.getProperties() })
   const { data: tenants } = useQuery({ queryKey: ['tenants'], queryFn: () => api.getTenants() })
+  const { data: leaseDocuments } = useQuery({
+    queryKey: ['documents', 'lease'],
+    queryFn: () => api.getDocuments(1, { entity_type: 'lease', limit: 500, omit_file_data: true }),
+  })
 
   const propertyMap = useMemo(
     () => new Map(
@@ -371,6 +697,14 @@ export function LeasesPage() {
     () => new Map((tenants?.data ?? []).map((t) => [t.id, `${t.first_name} ${t.last_name}`])),
     [tenants],
   )
+  const docCountByLease = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const doc of leaseDocuments?.data ?? []) {
+      if (!doc.entity_id) continue
+      counts.set(doc.entity_id, (counts.get(doc.entity_id) ?? 0) + 1)
+    }
+    return counts
+  }, [leaseDocuments])
   const leases = data?.data ?? []
   const filters = useMemo(() => parseFiltersFromURL(searchParams), [searchParams])
   const activeFilterCount = countActiveFilters(filters)
@@ -426,6 +760,7 @@ export function LeasesPage() {
     setMode('create')
     setEditingId(null)
     setForm(emptyForm)
+    setPendingDocuments([])
     setConfirmTerminate(false)
   }
 
@@ -433,6 +768,7 @@ export function LeasesPage() {
     setMode('create')
     setEditingId(null)
     setForm(emptyForm)
+    setPendingDocuments([])
     setOpen(true)
   }
 
@@ -440,19 +776,43 @@ export function LeasesPage() {
     setMode('edit')
     setEditingId(lease.id)
     setForm(leaseToForm(lease))
+    setPendingDocuments([])
     setOpen(true)
   }
 
   const onSuccess = () => {
-    qc.invalidateQueries({ queryKey: ['leases'] })
+    invalidateAfterMutation(qc, 'leases', 'properties')
     closeDialog()
   }
 
   const buildPayload = () => formToPayload(form, selectedApartment)
 
+  const uploadPendingDocuments = async (leaseId: string) => {
+    if (pendingDocuments.length === 0) return
+    await Promise.all(
+      pendingDocuments.map((doc) =>
+        api.createDocument({
+          entity_type: 'lease',
+          entity_id: leaseId,
+          category: doc.category,
+          title: doc.title,
+          file_name: doc.file_name,
+          file_data: doc.file_data,
+          mime_type: doc.mime_type,
+          size_bytes: doc.size_bytes,
+        }),
+      ),
+    )
+    qc.invalidateQueries({ queryKey: ['documents'] })
+  }
+
   const create = useMutation({
-    mutationFn: () => api.createLease(buildPayload()),
-    onSuccess,
+    mutationFn: async () => {
+      const lease = await api.createLease(buildPayload())
+      await uploadPendingDocuments(lease.id)
+      return lease
+    },
+    onSuccess: () => onSuccess(),
   })
 
   const update = useMutation({
@@ -468,6 +828,27 @@ export function LeasesPage() {
   const isSaving = create.isPending || update.isPending
   const mutationError = create.error || update.error || terminate.error
   const canTerminate = editingLease?.status !== 'terminated'
+  const [viewMode, setViewMode] = useViewMode('leases', 'tabla')
+
+  const leaseActions = (l: Lease) => (
+    <div className="flex gap-1 shrink-0">
+      <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(l)} title="Editar arriendo">
+        <Pencil className="h-4 w-4" />
+      </Button>
+      {l.status !== 'terminated' && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-destructive hover:text-destructive"
+          onClick={() => { setEditingId(l.id); setConfirmTerminate(true) }}
+          title="Dar de baja"
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      )}
+    </div>
+  )
 
   if (isLoading && !data) return <LoadingSkeleton />
 
@@ -533,7 +914,7 @@ export function LeasesPage() {
                 </option>
               ))}
             </FormSelect>
-            <div className="relative">
+            <div className="relative sm:col-span-2 lg:col-span-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={filters.q}
@@ -542,17 +923,62 @@ export function LeasesPage() {
                 className="pl-9"
               />
             </div>
+            <div className="sm:col-span-2 lg:col-span-3">
+              <ViewModeToggle value={viewMode} onChange={setViewMode} />
+            </div>
           </CardContent>
         </Card>
       )}
 
       <Card>
         <CardHeader><CardTitle className="text-base">Contratos</CardTitle></CardHeader>
-        <CardContent className="p-0">
+        <CardContent className={viewMode === 'tabla' ? 'p-0' : undefined}>
           {!leases.length ? (
             <EmptyState message="Sin arriendos. Primero agrega propiedades y arrendatarios." />
           ) : !displayedLeases.length ? (
             <EmptyState message={t('leases.noResults')} />
+          ) : viewMode === 'tarjetas' ? (
+            <DataCardGrid>
+              {displayedLeases.map((l) => (
+                <Card key={l.id}>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <CardTitle className="text-base">{formatLeaseProperty(l, propertyMap)}</CardTitle>
+                      <StatusBadge status={l.status} label={leaseStatusLabels[l.status]} />
+                    </div>
+                    <p className="text-sm text-muted-foreground">{tenantMap.get(l.tenant_id) ?? '—'}</p>
+                    <LeaseRenewalBadges lease={l} />
+                  </CardHeader>
+                  <CardContent className="space-y-1 text-sm text-muted-foreground">
+                    <p>{l.start_date ? formatDate(l.start_date) : '—'} → {l.end_date ? formatDate(l.end_date) : '—'}</p>
+                    <p className="font-medium text-foreground">{formatCurrency(l.monthly_rent.amount)}/mes</p>
+                    <LeaseTimingDisplay lease={l} />
+                    <div className="pt-2">{leaseActions(l)}</div>
+                  </CardContent>
+                </Card>
+              ))}
+            </DataCardGrid>
+          ) : viewMode === 'lista' ? (
+            <DataListShell>
+              {displayedLeases.map((l) => (
+                <DataListItem key={l.id} className="justify-between">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium">{formatLeaseProperty(l, propertyMap)}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {tenantMap.get(l.tenant_id) ?? '—'}
+                      {' · '}
+                      {l.start_date ? formatDate(l.start_date) : '—'} – {l.end_date ? formatDate(l.end_date) : '—'}
+                      {' · '}
+                      {formatCurrency(l.monthly_rent.amount)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <StatusBadge status={l.status} label={leaseStatusLabels[l.status]} />
+                    {leaseActions(l)}
+                  </div>
+                </DataListItem>
+              ))}
+            </DataListShell>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -563,6 +989,7 @@ export function LeasesPage() {
                     <th className="p-4 font-medium">Arrendatario</th>
                     <th className="p-4 font-medium">Inicio</th>
                     <th className="p-4 font-medium">Fin</th>
+                    <th className="p-4 font-medium">Vigencia</th>
                     <th className="p-4 font-medium">Arriendo</th>
                     <th className="p-4 font-medium">IPC</th>
                     <th className="p-4 font-medium">Día pago</th>
@@ -575,32 +1002,30 @@ export function LeasesPage() {
                       <td className="p-4">
                         <StatusBadge status={l.status} label={leaseStatusLabels[l.status]} />
                       </td>
-                      <td className="p-4">{formatLeaseProperty(l, propertyMap)}</td>
-                      <td className="p-4">{tenantMap.get(l.tenant_id) ?? '—'}</td>
-                      <td className="p-4">{l.start_date ? formatDate(l.start_date) : '—'}</td>
-                      <td className="p-4">{l.end_date ? formatDate(l.end_date) : '—'}</td>
-                      <td className="p-4 font-medium">{formatCurrency(l.monthly_rent.amount)}</td>
-                      <td className="p-4">{l.ipc_adjustment ? 'Sí' : 'No'}</td>
-                      <td className="p-4">{l.payment_day}</td>
                       <td className="p-4">
-                        <div className="flex gap-1">
-                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(l)} title="Editar arriendo">
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          {l.status !== 'terminated' && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-destructive hover:text-destructive"
-                              onClick={() => { setEditingId(l.id); setConfirmTerminate(true) }}
-                              title="Dar de baja"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span>{formatLeaseProperty(l, propertyMap)}</span>
+                          {(docCountByLease.get(l.id) ?? 0) > 0 && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                              <FileText className="h-3 w-3" />
+                              {docCountByLease.get(l.id)}
+                            </span>
                           )}
                         </div>
                       </td>
+                      <td className="p-4">{tenantMap.get(l.tenant_id) ?? '—'}</td>
+                      <td className="p-4">{l.start_date ? formatDate(l.start_date) : '—'}</td>
+                      <td className="p-4">
+                        <div>{l.end_date ? formatDate(l.end_date) : '—'}</div>
+                        <LeaseRenewalBadges lease={l} />
+                      </td>
+                      <td className="p-4">
+                        <LeaseTimingDisplay lease={l} />
+                      </td>
+                      <td className="p-4 font-medium">{formatCurrency(l.monthly_rent.amount)}</td>
+                      <td className="p-4">{l.ipc_adjustment ? 'Sí' : 'No'}</td>
+                      <td className="p-4">{l.payment_day}</td>
+                      <td className="p-4">{leaseActions(l)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -640,6 +1065,8 @@ export function LeasesPage() {
           mode={mode}
           editingLeaseId={editingId}
           leases={leases}
+          pendingDocuments={pendingDocuments}
+          onPendingDocumentsChange={setPendingDocuments}
         />
         {mutationError && <p className="text-sm text-destructive">{(mutationError as Error).message}</p>}
       </FormDialog>

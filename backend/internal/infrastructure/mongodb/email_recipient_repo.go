@@ -47,6 +47,22 @@ func (r *EmailRecipientRepo) Delete(ctx context.Context, orgID, id string) error
 	return err
 }
 
+func (r *EmailRecipientRepo) FindByPropertyID(ctx context.Context, orgID, propertyID, excludeID string) (*domainer.EmailRecipient, error) {
+	filter := bson.M{
+		"organization_id": orgID,
+		"property_id":     propertyID,
+	}
+	if excludeID != "" {
+		filter["_id"] = bson.M{"$ne": excludeID}
+	}
+	var rec domainer.EmailRecipient
+	err := r.col.FindOne(ctx, filter).Decode(&rec)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, nil
+	}
+	return &rec, err
+}
+
 func (r *EmailRecipientRepo) ListEnabledForType(ctx context.Context, orgID string, notifType domainer.NotificationType) ([]domainer.EmailRecipient, error) {
 	filter := bson.M{
 		"organization_id": orgID,

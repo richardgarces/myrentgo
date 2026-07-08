@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" role="img" aria-label="MyRent Go">
+  <defs>
+    <linearGradient id="bg" x1="4" y1="4" x2="44" y2="44" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#1d4ed8"/>
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="12" fill="url(#bg)"/>
+  <!-- Building -->
+  <path d="M14 32V20l10-6 10 6v12H26v-8h-4v8H14z" fill="#fff"/>
+  <!-- Subtle mail / notification -->
+  <path d="M32 14h8v6l-4 3-4-3v-6z" fill="#fff" opacity="0.9"/>
+  <circle cx="38" cy="13" r="3" fill="#fbbf24" stroke="#1d4ed8" stroke-width="1.5"/>
+</svg>

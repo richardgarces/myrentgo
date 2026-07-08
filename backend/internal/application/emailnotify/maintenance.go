@@ -3,10 +3,8 @@ package emailnotify
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
-	domainer "github.com/richard/my-rent-go/internal/domain/emailrecipient"
 	domainmaint "github.com/richard/my-rent-go/internal/domain/maintenance"
 	domainnotif "github.com/richard/my-rent-go/internal/domain/notification"
 	domainsettings "github.com/richard/my-rent-go/internal/domain/notificationsettings"
@@ -322,24 +320,12 @@ func (s *Service) buildMaintenanceContext(ctx context.Context, orgID string, m *
 }
 
 func (s *Service) sendMaintenanceNotification(ctx context.Context, orgID string, n *domainnotif.Notification, ctxData email.MaintenanceContext) (*SendResult, error) {
-	recs, err := s.recipients.ListEnabledForType(ctx, orgID, domainer.TypeMaintenanceDue)
+	emails, err := s.resolveNotificationRecipients(ctx, orgID, n)
 	if err != nil {
-		return nil, err
-	}
-	if len(recs) == 0 {
-		n.Status = domainnotif.StatusFailed
+		errMsg := err.Error()
+		n.MarkFailed(errMsg)
 		_ = s.notifications.Update(ctx, n)
-		return &SendResult{FailedCount: 1, Errors: []string{"no enabled recipients for type maintenance_due"}}, nil
-	}
-
-	emails := make([]string, 0, len(recs))
-	for _, r := range recs {
-		if addr := strings.TrimSpace(r.Email); addr != "" {
-			emails = append(emails, addr)
-		}
-	}
-	if len(emails) == 0 {
-		return nil, fmt.Errorf("no valid email addresses configured")
+		return &SendResult{FailedCount: 1, Errors: []string{errMsg}}, nil
 	}
 
 	subject, htmlBody, textBody := email.RenderMaintenanceNotification(n.Title, n.Message, ctxData)
@@ -352,14 +338,12 @@ func (s *Service) sendMaintenanceNotification(ctx context.Context, orgID string,
 
 	now := time.Now().UTC()
 	if sendErr != nil {
-		n.Status = domainnotif.StatusFailed
-		n.SentAt = nil
+		n.MarkFailed(sendErr.Error())
 		_ = s.notifications.Update(ctx, n)
 		return &SendResult{FailedCount: 1, Errors: []string{sendErr.Error()}}, nil
 	}
 
-	n.Status = domainnotif.StatusSent
-	n.SentAt = &now
+	n.MarkSent(now)
 	if err := s.notifications.Update(ctx, n); err != nil {
 		return &SendResult{SentCount: len(emails), Recipients: emails}, err
 	}

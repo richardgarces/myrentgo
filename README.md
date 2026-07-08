@@ -26,18 +26,44 @@ Plataforma SaaS de administración de propiedades y arriendos. Backend en Go (Cl
 ### Desarrollo local
 
 ```bash
-# Menú interactivo (recomendado)
 chmod +x myrent.sh
-./myrent.sh
-
-# Inicio rápido sin menú
-./myrent.sh quickstart
+./myrent.sh              # menú interactivo
+./myrent.sh modes        # guía de puertos y cuándo reiniciar
+./myrent.sh quickstart   # inicio rápido (modo nativo)
 ```
 
 Credenciales por defecto: **admin** / **admin123**  
-App: http://localhost:4000 | API: http://localhost:7070
+Cuenta pentest (sin MFA): **gestor@test.local** / **pentest123** — `./myrent.sh bootstrap`
 
-### Desarrollo manual
+| Modo | App | API | Tras cambios en código |
+|------|-----|-----|------------------------|
+| **Nativo** (`local-start`, `watch`) | :4000 (Vite) | :7070 | `watch` (auto) o `local-restart` |
+| **Docker** (`docker-up`) | :3000 (nginx) | :7070 | `docker-restart` (rebuild) |
+
+No ejecutar API nativa y contenedor Docker a la vez (ambos usan `:7070`).
+
+**Nativo (recomendado para desarrollo):**
+
+```bash
+./myrent.sh local-start    # segundo plano — App :4000, API :7070
+./myrent.sh watch          # recarga automática (air + Vite HMR)
+./myrent.sh local-restart  # reiniciar tras cambios (sin watch)
+./myrent.sh local-stop
+```
+
+**Docker (tipo producción):**
+
+```bash
+./myrent.sh docker-up       # App :3000, API :7070
+./myrent.sh docker-restart  # rebuild + reinicio tras cambios
+./myrent.sh docker-down
+```
+
+PIDs nativos en `.myrent/`; logs en `.myrent/logs/`.
+
+**Liberar espacio en disco:** `./scripts/cleanup-disk.sh` o `./myrent.sh cleanup-disk` (menú Utilidades).
+
+**MongoDB en desarrollo:** `docker-compose.yml` publica `127.0.0.1:27017` sin auth (solo localhost). En producción use `docker-compose.prod.yml` (sin puerto publicado, red interna).
 
 ### Docker Compose completo
 

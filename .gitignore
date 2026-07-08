@@ -17,6 +17,7 @@ bin/
 # Environment
 .env
 .env.local
+.env.production
 .env.*.local
 
 # Storage
@@ -38,9 +39,13 @@ Thumbs.db
 coverage.out
 coverage.html
 *.test
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
 
 # Logs
 *.log
 
 # Go
 vendor/
+backend/tmp/

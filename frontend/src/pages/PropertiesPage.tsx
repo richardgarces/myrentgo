@@ -2,14 +2,23 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useSearchParams, Link } from 'react-router-dom'
-import { ChevronDown, ChevronRight, FileText, Plus, Search, Star, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, ClipboardList, FileText, LayoutList, Plus, Search, Star, X } from 'lucide-react'
+import { PropertyCompletenessView } from '@/components/PropertyCompletenessView'
+import { DataListItem, DataListShell } from '@/components/DataListViews'
+import { ViewModeToggle } from '@/components/ViewModeToggle'
 import { PacBadge, pacCardAccentClassName } from '@/components/PacBadge'
+import { PaymentBankSelect } from '@/components/PaymentBankSelect'
+import { DocumentActions } from '@/components/DocumentActions'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FormDialog, FormField, FormSelect } from '@/components/ui/form-dialog'
 import { Input } from '@/components/ui/input'
 import { LoadingSkeleton } from '@/components/ui/page'
+import { useViewMode } from '@/hooks/useViewMode'
 import { api, type Document as PropertyDocument, type Lease, type Property, type PropertyPhoto } from '@/lib/api'
+import { invalidateAfterMutation } from '@/lib/query-options'
+import { propertyDocumentCategoryLabels, mimeFromDataUrl, validateDocumentFileSize, DOCUMENT_UPLOAD_HINT } from '@/lib/document-utils'
+import { buildBankOptions, type BankOption } from '@/lib/payment-banks'
 import { cn, formatDate, formatUF, propertyLinkLabel } from '@/lib/utils'
 import {
   CHILE_REGIONS,
@@ -87,6 +96,12 @@ type PropertyFilters = {
 }
 
 const PROPERTY_TYPES = ['apartment', 'parking', 'warehouse', 'house', 'office', 'land'] as const
+
+type PageSection = 'listado' | 'completitud'
+
+function parsePageSection(searchParams: URLSearchParams): PageSection {
+  return searchParams.get('vista') === 'completitud' ? 'completitud' : 'listado'
+}
 
 const PURPOSE_OPTIONS = ['rent', 'live', 'vacation', 'construction', 'other'] as const
 
@@ -212,13 +227,6 @@ function defaultExpandedCommunes(communes: string[]): Set<string> {
 
 const MAX_PHOTOS = 10
 
-const documentCategoryLabels: Record<string, string> = {
-  deed: 'Escritura',
-  contract: 'Contrato',
-  certificate: 'Certificado',
-  other: 'Otro',
-}
-
 type PendingDocument = {
   localId: string
   title: string
@@ -227,11 +235,6 @@ type PendingDocument = {
   file_data: string
   mime_type: string
   size_bytes: number
-}
-
-function mimeFromDataUrl(dataUrl: string): string {
-  const match = dataUrl.match(/^data:([^;]+);base64,/)
-  return match?.[1] ?? 'application/octet-stream'
 }
 
 function PropertyDocumentsSection({
@@ -255,7 +258,7 @@ function PropertyDocumentsSection({
 
   const { data: existingDocs, refetch } = useQuery({
     queryKey: ['documents', 'property', propertyId],
-    queryFn: () => api.getDocuments(1, { entity_type: 'property', entity_id: propertyId! }),
+    queryFn: () => api.getDocuments(1, { entity_type: 'property', entity_id: propertyId!, omit_file_data: true }),
     enabled: !!propertyId,
   })
 
@@ -288,6 +291,11 @@ function PropertyDocumentsSection({
     const docTitle = currentTitle()
     if (!docTitle) {
       setFileError('Ingresa el nombre del documento')
+      return
+    }
+    const sizeError = validateDocumentFileSize(file)
+    if (sizeError) {
+      setFileError(sizeError)
       return
     }
     setFileError(null)
@@ -371,7 +379,7 @@ function PropertyDocumentsSection({
             {adding ? 'Subiendo…' : 'Seleccionar archivo'}
           </span>
         </label>
-        <p className="text-xs text-muted-foreground">PDF, Word o imagen</p>
+        <p className="text-xs text-muted-foreground">{DOCUMENT_UPLOAD_HINT}</p>
       </div>
       {fileError && <p className="text-sm text-destructive">{fileError}</p>}
 
@@ -383,21 +391,10 @@ function PropertyDocumentsSection({
               <div className="min-w-0 flex-1">
                 <p className="font-medium truncate">{doc.title}</p>
                 <p className="text-xs text-muted-foreground">
-                  {documentCategoryLabels[doc.category] || doc.category} · {doc.file_name}
+                  {propertyDocumentCategoryLabels[doc.category] || doc.category} · {doc.file_name}
                 </p>
               </div>
-              {doc.file_data && (
-                <a
-                  href={doc.file_data}
-                  download={doc.file_name}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-primary hover:underline shrink-0"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  Ver
-                </a>
-              )}
+              <DocumentActions doc={doc} variant="links" />
               <button
                 type="button"
                 title="Eliminar documento"
@@ -415,7 +412,7 @@ function PropertyDocumentsSection({
               <div className="min-w-0 flex-1">
                 <p className="font-medium truncate">{doc.title}</p>
                 <p className="text-xs text-muted-foreground">
-                  {documentCategoryLabels[doc.category] || doc.category} · {doc.file_name} (pendiente)
+                  {propertyDocumentCategoryLabels[doc.category] || doc.category} · {doc.file_name} (pendiente)
                 </p>
               </div>
               <button
@@ -438,7 +435,7 @@ const emptyForm = {
   name: '', type: 'apartment', purpose: '', purpose_other: '',
   street: '', region: DEFAULT_REGION, commune: DEFAULT_COMMUNE,
   owner_name: '', property_rol: '', fojas: '', parking_property_id: '', warehouse_property_id: '',
-  value_uf: '', debt_uf: '', original_loan_uf: '', monthly_mortgage_uf: '',
+  value_uf: '', commercial_value_uf: '', debt_uf: '', original_loan_uf: '', monthly_mortgage_uf: '',
   loan_term_years: '', installments_paid: '', interest_rate: '', bank_name: '', credit_number: '', payment_start_date: '',
   pac_enabled: false, payment_bank: '',
   unit_number: '', floor: '', area_m2: '',
@@ -514,6 +511,7 @@ function propertyToForm(p: Property, allProperties: Property[] = []): PropertyFo
     parking_property_id: p.parking_property_id ?? '',
     warehouse_property_id: warehousePropertyId,
     value_uf: p.financials?.value_uf ? String(p.financials.value_uf) : '',
+    commercial_value_uf: p.financials?.commercial_value_uf ? String(p.financials.commercial_value_uf) : '',
     debt_uf: p.financials?.debt_uf ? String(p.financials.debt_uf) : '',
     original_loan_uf: p.financials?.original_loan_uf ? String(p.financials.original_loan_uf) : '',
     monthly_mortgage_uf: p.financials?.monthly_mortgage_uf
@@ -587,6 +585,7 @@ function formToPayload(form: PropertyForm) {
       parking_property_id: form.parking_property_id || undefined,
     } : {}),
     value_uf: form.value_uf ? Number(form.value_uf) : undefined,
+    commercial_value_uf: form.commercial_value_uf ? Number(form.commercial_value_uf) : undefined,
     debt_uf: form.debt_uf ? Number(form.debt_uf) : undefined,
     original_loan_uf: form.original_loan_uf ? Number(form.original_loan_uf) : undefined,
     monthly_mortgage_uf: form.monthly_mortgage_uf ? Number(form.monthly_mortgage_uf) : undefined,
@@ -870,6 +869,7 @@ function PropertyFormFields({
   propertyId,
   pendingDocuments,
   onPendingDocumentsChange,
+  paymentBankOptions,
 }: {
   form: PropertyForm
   setForm: (form: PropertyForm) => void
@@ -879,6 +879,7 @@ function PropertyFormFields({
   propertyId: string | null
   pendingDocuments: PendingDocument[]
   onPendingDocumentsChange: (docs: PendingDocument[]) => void
+  paymentBankOptions: BankOption[]
 }) {
   const selectableWarehouses = form.type === 'apartment'
     ? availableWarehousesForApartment(
@@ -1081,8 +1082,9 @@ function PropertyFormFields({
       )}
 
       <FormSection title="Crédito hipotecario (UF / dividendo)" />
-      <div className="grid grid-cols-3 gap-3">
-        <FormField label="Valor en UF"><Input type="number" step="any" min="0" value={form.value_uf} onChange={(e) => setForm({ ...form, value_uf: e.target.value })} placeholder="2500" /></FormField>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <FormField label="Valor compra (UF)"><Input type="number" step="any" min="0" value={form.value_uf} onChange={(e) => setForm({ ...form, value_uf: e.target.value })} placeholder="2500" /></FormField>
+        <FormField label="Valor comercial (UF)"><Input type="number" step="any" min="0" value={form.commercial_value_uf} onChange={(e) => setForm({ ...form, commercial_value_uf: e.target.value })} placeholder="3200" /></FormField>
         <FormField label="Monto original del crédito (UF)"><Input type="number" step="any" min="0" value={form.original_loan_uf} onChange={(e) => setForm({ ...form, original_loan_uf: e.target.value })} placeholder="2000" /></FormField>
         <FormField label="Deuda UF a la fecha"><Input type="number" step="any" min="0" value={form.debt_uf} onChange={(e) => setForm({ ...form, debt_uf: e.target.value })} placeholder="1800" /></FormField>
       </div>
@@ -1101,7 +1103,12 @@ function PropertyFormFields({
       </div>
       <div className="grid grid-cols-2 gap-3">
         <FormField label="Banco de pago del dividendo">
-          <Input value={form.payment_bank} onChange={(e) => setForm({ ...form, payment_bank: e.target.value })} placeholder="Ej: BCI (cuenta de cargo)" />
+          <PaymentBankSelect
+            value={form.payment_bank}
+            onChange={(payment_bank) => setForm({ ...form, payment_bank })}
+            options={paymentBankOptions}
+            placeholder="Ej: BCI (cuenta de cargo)"
+          />
         </FormField>
         <FormField label="PAC (pago automático)">
           <label className="flex items-center gap-2 h-10 text-sm">
@@ -1316,7 +1323,10 @@ function PropertyCard({
         {p.financials?.payment_start_date && (
           <p>Compra / inicio pago: {formatDate(p.financials.payment_start_date)}</p>
         )}
-        {(p.financials?.value_uf ?? 0) > 0 && <p>Valor: {formatUF(p.financials!.value_uf!)}</p>}
+        {(p.financials?.value_uf ?? 0) > 0 && <p>Valor compra: {formatUF(p.financials!.value_uf!)}</p>}
+        {(p.financials?.commercial_value_uf ?? 0) > 0 && (
+          <p>Valor comercial: {formatUF(p.financials!.commercial_value_uf!)}</p>
+        )}
         {(p.financials?.original_loan_uf ?? 0) > 0 && (
           <p>Crédito original: {formatUF(p.financials!.original_loan_uf!)}</p>
         )}
@@ -1444,6 +1454,10 @@ export function PropertiesPage() {
     queryFn: () => api.getProperties({ type: 'warehouse' }),
     enabled: open && form.type === 'apartment',
   })
+  const { data: crmBanks } = useQuery({
+    queryKey: ['crm', 'banks'],
+    queryFn: () => api.getContacts(1, 'bank', 500),
+  })
 
   const propertyMap = new Map(
     (data?.data ?? []).map((p) => [
@@ -1452,8 +1466,23 @@ export function PropertiesPage() {
     ]),
   )
   const properties = data?.data ?? []
+  const paymentBankOptions = useMemo(
+    () => buildBankOptions({
+      crmBanks: (crmBanks?.data ?? []).map((b) => ({ id: b.id, name: b.name })),
+      properties,
+    }),
+    [crmBanks, properties],
+  )
   const filters = useMemo(() => parseFiltersFromURL(searchParams), [searchParams])
+  const pageSection = useMemo(() => parsePageSection(searchParams), [searchParams])
   const activeFilterCount = countActiveFilters(filters)
+
+  const setPageSection = (section: PageSection) => {
+    const next = new URLSearchParams(searchParams)
+    if (section === 'completitud') next.set('vista', 'completitud')
+    else next.delete('vista')
+    setSearchParams(next, { replace: true })
+  }
 
   const updateFilters = (patch: Partial<PropertyFilters>) => {
     const next = { ...filters, ...patch }
@@ -1544,7 +1573,7 @@ export function PropertiesPage() {
   }
 
   const onSuccess = () => {
-    qc.invalidateQueries({ queryKey: ['properties'] })
+    invalidateAfterMutation(qc, 'properties')
     closeDialog()
   }
 
@@ -1568,6 +1597,7 @@ export function PropertiesPage() {
 
   const isSaving = create.isPending || update.isPending
   const mutationError = create.error || update.error || remove.error
+  const [viewMode, setViewMode] = useViewMode('properties', 'tarjetas')
 
   if (isLoading && !data) return <LoadingSkeleton />
 
@@ -1577,14 +1607,44 @@ export function PropertiesPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">{t('nav.properties')}</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {activeFilterCount > 0
-              ? t('properties.filteredCount', { filtered: filteredCount, total: totalCount })
-              : t('properties.totalCount', { count: totalCount })}
+            {pageSection === 'completitud'
+              ? t('properties.completenessSubtitle', { count: totalCount })
+              : activeFilterCount > 0
+                ? t('properties.filteredCount', { filtered: filteredCount, total: totalCount })
+                : t('properties.totalCount', { count: totalCount })}
           </p>
         </div>
-        <Button onClick={openCreate}><Plus className="h-4 w-4" /> Agregar propiedad</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex rounded-md border p-0.5 bg-muted/30">
+            <Button
+              type="button"
+              variant={pageSection === 'listado' ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={() => setPageSection('listado')}
+            >
+              <LayoutList className="h-4 w-4" />
+              Listado
+            </Button>
+            <Button
+              type="button"
+              variant={pageSection === 'completitud' ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={() => setPageSection('completitud')}
+            >
+              <ClipboardList className="h-4 w-4" />
+              Datos faltantes
+            </Button>
+          </div>
+          <Button onClick={openCreate}><Plus className="h-4 w-4" /> Agregar propiedad</Button>
+        </div>
       </div>
 
+      {pageSection === 'completitud' ? (
+        <PropertyCompletenessView properties={properties} onEdit={openEdit} />
+      ) : (
+      <>
       <Card>
         <CardHeader className="pb-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1629,6 +1689,9 @@ export function PropertiesPage() {
               className="pl-9"
             />
           </div>
+          <div className="sm:col-span-2 lg:col-span-4">
+            <ViewModeToggle value={viewMode} onChange={setViewMode} />
+          </div>
         </CardContent>
       </Card>
 
@@ -1663,25 +1726,93 @@ export function PropertiesPage() {
         </Card>
       )}
 
-      <div className="space-y-3">
-        {communeGroups.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-8 text-center">
-            {activeFilterCount > 0 ? t('properties.noResults') : t('properties.noAvailable')}
-          </p>
-        ) : communeGroups.map(({ commune, properties: communeProperties }) => (
-          <CommunePropertyGroup
-            key={commune}
-            commune={commune}
-            properties={communeProperties}
-            expanded={expandedCommunes.has(commune)}
-            onToggle={() => toggleCommune(commune)}
-            propertyMap={propertyMap}
-            allProperties={properties}
-            leasedIds={leasedIds}
-            onEdit={openEdit}
-          />
-        ))}
-      </div>
+      {displayedProperties.length === 0 ? (
+        <p className="text-sm text-muted-foreground py-8 text-center">
+          {activeFilterCount > 0 ? t('properties.noResults') : t('properties.noAvailable')}
+        </p>
+      ) : viewMode === 'tabla' ? (
+        <Card>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="p-4 font-medium">Nombre</th>
+                    <th className="p-4 font-medium">Tipo</th>
+                    <th className="p-4 font-medium">Estado</th>
+                    <th className="p-4 font-medium">Destino</th>
+                    <th className="p-4 font-medium">Comuna</th>
+                    <th className="p-4 font-medium">Dueño</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayedProperties.map((p) => {
+                    const displayStatus = getPropertyDisplayStatus(p, leasedIds)
+                    return (
+                      <tr
+                        key={p.id}
+                        className="border-b hover:bg-muted/50 cursor-pointer"
+                        onClick={() => openEdit(p)}
+                      >
+                        <td className="p-4 font-medium">{p.name}</td>
+                        <td className="p-4">{typeLabels[p.type] || p.type}</td>
+                        <td className="p-4">
+                          <span className={cn('text-xs px-2 py-1 rounded-full', statusColors[displayStatus] || '')}>
+                            {statusLabels[displayStatus] || displayStatus}
+                          </span>
+                        </td>
+                        <td className="p-4">{p.purpose ? purposeLabels[p.purpose] || p.purpose : '—'}</td>
+                        <td className="p-4">{p.address?.commune ?? '—'}</td>
+                        <td className="p-4">{p.owner_name ?? '—'}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      ) : viewMode === 'lista' ? (
+        <DataListShell>
+          {displayedProperties.map((p) => {
+            const displayStatus = getPropertyDisplayStatus(p, leasedIds)
+            return (
+              <DataListItem key={p.id} onClick={() => openEdit(p)}>
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium">{p.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {typeLabels[p.type] || p.type}
+                    {' · '}
+                    {p.address?.commune ?? '—'}
+                    {p.owner_name ? ` · ${p.owner_name}` : ''}
+                  </p>
+                </div>
+                <span className={cn('text-xs px-2 py-1 rounded-full shrink-0', statusColors[displayStatus] || '')}>
+                  {statusLabels[displayStatus] || displayStatus}
+                </span>
+              </DataListItem>
+            )
+          })}
+        </DataListShell>
+      ) : (
+        <div className="space-y-3">
+          {communeGroups.map(({ commune, properties: communeProperties }) => (
+            <CommunePropertyGroup
+              key={commune}
+              commune={commune}
+              properties={communeProperties}
+              expanded={expandedCommunes.has(commune)}
+              onToggle={() => toggleCommune(commune)}
+              propertyMap={propertyMap}
+              allProperties={properties}
+              leasedIds={leasedIds}
+              onEdit={openEdit}
+            />
+          ))}
+        </div>
+      )}
+      </>
+      )}
 
       <FormDialog
         open={open}
@@ -1708,6 +1839,7 @@ export function PropertiesPage() {
           propertyId={mode === 'edit' ? editingId : null}
           pendingDocuments={pendingDocuments}
           onPendingDocumentsChange={setPendingDocuments}
+          paymentBankOptions={paymentBankOptions}
         />
         {mutationError && <p className="text-sm text-destructive">{(mutationError as Error).message}</p>}
       </FormDialog>

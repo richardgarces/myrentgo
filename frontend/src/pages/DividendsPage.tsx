@@ -3,16 +3,21 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useSearchParams } from 'react-router-dom'
 import { CalendarDays, Landmark, Pencil, Plus } from 'lucide-react'
+import { DataCardGrid, DataListItem, DataListShell } from '@/components/DataListViews'
+import { ViewModeToggle } from '@/components/ViewModeToggle'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FormDialog, FormField, FormSelect } from '@/components/ui/form-dialog'
 import { Input } from '@/components/ui/input'
 import { EmptyState, LoadingSkeleton, PageHeader, StatusBadge } from '@/components/ui/page'
 import { PacBadge, PacLegendNote, pacRowClassName } from '@/components/PacBadge'
+import { PaymentBankSelect } from '@/components/PaymentBankSelect'
 import { SortableTableHead } from '@/components/SortableTableHead'
 import { UFIndicatorNote, UFWithCLP } from '@/components/UFWithCLP'
+import { useViewMode } from '@/hooks/useViewMode'
 import { useTableSort } from '@/hooks/useTableSort'
 import { api, type DividendPayment, type Property } from '@/lib/api'
+import { buildBankOptions, resolveBankId } from '@/lib/payment-banks'
 import { cn, dividendDueDateForMonth, formatDate, formatMonthLabel, formatUF, hasMortgageCredit } from '@/lib/utils'
 
 const emptyForm = {
@@ -40,12 +45,6 @@ function formatAmount(amount: number, currency: string): string {
 
 function monthAlreadyGeneratedMessage(month: string): string {
   return `Dividendos de ${formatMonthLabel(month)} ya generados.`
-}
-
-function resolveBankId(bankName: string, banks: { id: string; name: string }[]): string {
-  if (!bankName) return ''
-  const lower = bankName.trim().toLowerCase()
-  return banks.find((b) => b.name.trim().toLowerCase() === lower)?.id ?? ''
 }
 
 type DividendSortKey = 'property' | 'institution' | 'payment_bank' | 'pac' | 'amount' | 'due_date' | 'status'
@@ -146,34 +145,15 @@ export function DividendsPage() {
     [crmBanks],
   )
 
-  const bankOptions = useMemo(() => {
-    const byName = new Map<string, { name: string; id: string }>()
-    const add = (name: string, id = '') => {
-      const trimmed = name.trim()
-      if (!trimmed) return
-      const key = trimmed.toLowerCase()
-      const existing = byName.get(key)
-      if (!existing) {
-        byName.set(key, { name: trimmed, id })
-        return
-      }
-      if (!existing.id && id) byName.set(key, { name: trimmed, id })
-    }
-    for (const b of crmBankList) add(b.name, b.id)
-    for (const b of dividendBanks?.data ?? []) add(b.bank_name, b.bank_id ?? '')
-    for (const p of mortgageProperties) {
-      if (p.financials?.bank_name) {
-        add(p.financials.bank_name, resolveBankId(p.financials.bank_name, crmBankList))
-      }
-      if (p.financials?.payment_bank) {
-        add(p.financials.payment_bank, resolveBankId(p.financials.payment_bank, crmBankList))
-      }
-    }
-    for (const item of stats?.by_bank ?? []) {
-      if (item.bank_name) add(item.bank_name, item.bank_id ?? '')
-    }
-    return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'))
-  }, [crmBankList, dividendBanks, mortgageProperties, stats])
+  const bankOptions = useMemo(
+    () => buildBankOptions({
+      crmBanks: crmBankList,
+      dividendBanks: dividendBanks?.data,
+      properties: mortgageProperties,
+      statsBanks: stats?.by_bank,
+    }),
+    [crmBankList, dividendBanks, mortgageProperties, stats],
+  )
 
   const mortgageCount = stats?.mortgage_property_count ?? mortgageProperties.length
   const totalMonthlyMortgageUF = stats?.total_monthly_mortgage_uf
@@ -327,6 +307,29 @@ export function DividendsPage() {
     else next.delete(key)
     setSearchParams(next, { replace: true })
   }
+
+  const [viewMode, setViewMode] = useViewMode('dividends', 'tabla')
+
+  const dividendActions = (d: DividendPayment) => (
+    <div className="flex flex-wrap gap-2">
+      <Button size="sm" variant="ghost" onClick={() => openEdit(d)} title="Editar">
+        <Pencil className="h-4 w-4" />
+      </Button>
+      {(d.status === 'pending' || d.status === 'overdue') && (
+        <Button size="sm" variant="outline" onClick={() => markPaid.mutate(d.id)}>
+          Marcar pagado
+        </Button>
+      )}
+    </div>
+  )
+
+  const renderDividendAmount = (d: DividendPayment) => (
+    d.amount.currency === 'UF' ? (
+      <UFWithCLP amount={d.amount.amount} valueClassName="font-medium" />
+    ) : (
+      formatAmount(d.amount.amount, d.amount.currency)
+    )
+  )
 
   if ((isLoading && !data) || statsLoading) return <LoadingSkeleton />
 
@@ -505,11 +508,64 @@ export function DividendsPage() {
                 ))}
               </FormSelect>
             </FormField>
+            <div className="sm:col-span-2 lg:col-span-4">
+              <ViewModeToggle value={viewMode} onChange={setViewMode} />
+            </div>
           </div>
         </CardHeader>
-        <CardContent className="p-0">
+        <CardContent className={viewMode === 'tabla' ? 'p-0' : undefined}>
           {!data?.data.length ? (
             <EmptyState message={t('dividends.empty')} />
+          ) : viewMode === 'tarjetas' ? (
+            <DataCardGrid>
+              {sortedDividends.map((d: DividendPayment) => (
+                <Card
+                  key={d.id}
+                  className={cn(d.pac_enabled && pacRowClassName)}
+                >
+                  <CardHeader className="pb-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <CardTitle className="text-base">{propertyMap.get(d.property_id ?? '') ?? '—'}</CardTitle>
+                      <StatusBadge status={d.status} />
+                    </div>
+                    <p className="text-xs text-muted-foreground">{d.bank_name || '—'}</p>
+                  </CardHeader>
+                  <CardContent className="space-y-1 text-sm text-muted-foreground">
+                    {d.pac_enabled && <PacBadge showIcon />}
+                    <p>Banco pago: {d.payment_bank || d.bank_name || '—'}</p>
+                    <div>{renderDividendAmount(d)}</div>
+                    <p>Vence: {formatDate(d.due_date)}</p>
+                    <div className="pt-2">{dividendActions(d)}</div>
+                  </CardContent>
+                </Card>
+              ))}
+            </DataCardGrid>
+          ) : viewMode === 'lista' ? (
+            <DataListShell>
+              {sortedDividends.map((d: DividendPayment) => (
+                <DataListItem
+                  key={d.id}
+                  className={cn('justify-between', d.pac_enabled && pacRowClassName)}
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium flex items-center gap-2 flex-wrap">
+                      {propertyMap.get(d.property_id ?? '') ?? '—'}
+                      {d.pac_enabled && <PacBadge showIcon />}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {d.bank_name || '—'}
+                      {' · '}
+                      {formatDate(d.due_date)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    {renderDividendAmount(d)}
+                    <StatusBadge status={d.status} />
+                    {dividendActions(d)}
+                  </div>
+                </DataListItem>
+              ))}
+            </DataListShell>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -549,27 +605,10 @@ export function DividendsPage() {
                           <span className="text-muted-foreground">No</span>
                         )}
                       </td>
-                      <td className="p-4">
-                        {d.amount.currency === 'UF' ? (
-                          <UFWithCLP amount={d.amount.amount} valueClassName="font-medium" />
-                        ) : (
-                          formatAmount(d.amount.amount, d.amount.currency)
-                        )}
-                      </td>
+                      <td className="p-4">{renderDividendAmount(d)}</td>
                       <td className="p-4">{formatDate(d.due_date)}</td>
                       <td className="p-4"><StatusBadge status={d.status} /></td>
-                      <td className="p-4">
-                        <div className="flex flex-wrap gap-2">
-                          <Button size="sm" variant="ghost" onClick={() => openEdit(d)} title="Editar">
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          {(d.status === 'pending' || d.status === 'overdue') && (
-                            <Button size="sm" variant="outline" onClick={() => markPaid.mutate(d.id)}>
-                              Marcar pagado
-                            </Button>
-                          )}
-                        </div>
-                      </td>
+                      <td className="p-4">{dividendActions(d)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -616,16 +655,12 @@ export function DividendsPage() {
             ))}
           </FormSelect>
         </FormField>
-        <FormField label="Banco de pago">
-          <FormSelect
+        <FormField label={t('dividends.paymentBank')}>
+          <PaymentBankSelect
             value={form.payment_bank}
-            onChange={(e) => setForm({ ...form, payment_bank: e.target.value })}
-          >
-            <option value="">—</option>
-            {bankOptions.map((b) => (
-              <option key={`pay-${b.name}`} value={b.name}>{b.name}</option>
-            ))}
-          </FormSelect>
+            onChange={(payment_bank) => setForm({ ...form, payment_bank })}
+            options={bankOptions}
+          />
         </FormField>
         <FormField label="PAC (pago automático)">
           <label className="flex items-center gap-2 text-sm">
@@ -678,16 +713,12 @@ export function DividendsPage() {
             ))}
           </FormSelect>
         </FormField>
-        <FormField label="Banco de pago">
-          <FormSelect
+        <FormField label={t('dividends.paymentBank')}>
+          <PaymentBankSelect
             value={form.payment_bank}
-            onChange={(e) => setForm({ ...form, payment_bank: e.target.value })}
-          >
-            <option value="">—</option>
-            {bankOptions.map((b) => (
-              <option key={`edit-pay-${b.name}`} value={b.name}>{b.name}</option>
-            ))}
-          </FormSelect>
+            onChange={(payment_bank) => setForm({ ...form, payment_bank })}
+            options={bankOptions}
+          />
         </FormField>
         <FormField label="PAC (pago automático)">
           <label className="flex items-center gap-2 text-sm">

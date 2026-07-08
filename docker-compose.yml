@@ -1,10 +1,14 @@
+# Development stack — copy .env.example to .env and set JWT_SECRET (never commit .env).
+# Pentest flags hardcoded JWT_SECRET literals; use .env for secrets even in dev.
+
 services:
+  # DEV_ONLY_MONGO: puerto 27017 sin auth solo en localhost. Producción: docker-compose.prod.yml (sin puerto publicado).
   mongodb:
     image: mongo:7
     container_name: myrent-mongodb
     restart: unless-stopped
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     volumes:
       - mongodb_data:/data/db
     environment:
@@ -21,18 +25,20 @@ services:
       dockerfile: Dockerfile
     container_name: myrent-api
     restart: unless-stopped
+    env_file:
+      - .env
     ports:
       - "7070:7070"
     environment:
-      # Required: MONGODB_URI, JWT_SECRET, CORS_ORIGINS, FRONTEND_URL
+      # Required in .env: JWT_SECRET (≥32 chars). Optional overrides below.
       # Optional (email): SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM
       APP_ENV: development
       APP_PORT: "7070"
       MONGODB_URI: mongodb://mongodb:27017
       MONGODB_DATABASE: myrent
-      JWT_SECRET: dev-secret-change-in-production-min-32-chars
-      CORS_ORIGINS: http://localhost:5173,http://localhost:3000
-      FRONTEND_URL: http://localhost:5173
+      JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:4000,http://localhost:5173,http://localhost:3000}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:4000}
       # localhost en .env no alcanza Mailpit desde el contenedor; mailpit = servicio en la misma red
       SMTP_HOST: ${SMTP_DOCKER_HOST:-mailpit}
       SMTP_PORT: ${SMTP_PORT:-587}
@@ -42,6 +48,8 @@ services:
       SMTP_FROM_NAME: ${SMTP_FROM_NAME:-MyRent Go}
       EMAIL_SCHEDULER_ENABLED: ${EMAIL_SCHEDULER_ENABLED:-true}
       EMAIL_SCHEDULER_INTERVAL: ${EMAIL_SCHEDULER_INTERVAL:-24h}
+      DOCUMENTS_PATH: /app/storage/documents
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-30}
     depends_on:
       mongodb:
         condition: service_healthy
@@ -55,10 +63,33 @@ services:
     container_name: myrent-frontend
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - "3000:8080"
     depends_on:
       - api
 
 volumes:
   mongodb_data:
   api_storage:
+
+# ── Prometheus (opcional, desarrollo local) ───────────────────────────────────
+# Descomenta para scrapear métricas de la API en http://api:7070/metrics
+#
+#  prometheus:
+#    image: prom/prometheus:v3.2.1
+#    container_name: myrent-prometheus
+#    restart: unless-stopped
+#    ports:
+#      - "9090:9090"
+#    volumes:
+#      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+#    depends_on:
+#      - api
+#
+# prometheus.yml de ejemplo:
+#   global:
+#     scrape_interval: 15s
+#   scrape_configs:
+#     - job_name: myrent-api
+#       static_configs:
+#         - targets: ['api:7070']
+#       metrics_path: /metrics

@@ -1,7 +1,9 @@
 # Dependencies
 node_modules/
-frontend/dist/
 frontend/node_modules/
+frontend/dist/
+**/dist/
+**/build/
 
 # Mailcow (clon mailcow-dockerized — datos, certificados, secretos)
 mailcow/
@@ -14,38 +16,63 @@ bin/
 *.so
 *.dylib
 
-# Environment
+# Environment / secrets (nunca versionar valores reales)
 .env
-.env.local
-.env.production
-.env.*.local
+.env.*
+!.env.example
+!.env.*.example
+!**/.env.example
+!**/.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets.json
 
-# Storage
-storage/
-backups/
-exports/
+# Storage / exports / backups (solo datos locales de la app, no paquetes Go)
+/storage/
+/backups/
+/exports/
+/uploads/
+/logs/
+/tmp/
+.run/
+backend/tmp/
 
-# IDE
+# IDE / editor
 .idea/
 .vscode/
 *.swp
 *.swo
+*~
 
 # OS
 .DS_Store
+.AppleDouble
+.LSOverride
 Thumbs.db
+desktop.ini
 
-# Test
+# Test / coverage
 coverage.out
 coverage.html
+coverage/
 *.test
 frontend/test-results/
 frontend/playwright-report/
 frontend/blob-report/
+frontend/playwright/.cache/
 
 # Logs
 *.log
 
+# TypeScript / bundler caches
+*.tsbuildinfo
+.turbo/
+.cache/
+.vite/
+*.local
+
 # Go
 vendor/
-backend/tmp/

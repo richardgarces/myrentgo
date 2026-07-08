@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -52,6 +53,10 @@ func (h *EmailNotificationsHandler) CreateRecipient(c *gin.Context) {
 	types, err := parseNotificationTypes(req.NotificationTypes)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(types) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "selecciona al menos un tipo de aviso"})
 		return
 	}
 	orgID := middleware.GetOrgID(c)
@@ -144,6 +149,10 @@ func (h *EmailNotificationsHandler) UpdateRecipient(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+		if len(types) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "selecciona al menos un tipo de aviso"})
+			return
+		}
 		rec.NotificationTypes = types
 	}
 
@@ -212,6 +221,7 @@ func (h *EmailNotificationsHandler) GetSMTPStatus(c *gin.Context) {
 type sendTestEmailReq struct {
 	RecipientID string `json:"recipient_id"`
 	Email       string `json:"email"`
+	AllFormats  bool   `json:"all_formats"`
 }
 
 func (h *EmailNotificationsHandler) SendTestEmail(c *gin.Context) {
@@ -221,7 +231,7 @@ func (h *EmailNotificationsHandler) SendTestEmail(c *gin.Context) {
 		return
 	}
 	orgID := middleware.GetOrgID(c)
-	result, err := h.svc.SendTest(c.Request.Context(), orgID, req.RecipientID, req.Email)
+	result, err := h.svc.SendTest(c.Request.Context(), orgID, req.RecipientID, req.Email, req.AllFormats)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if !h.svc.SMTPConfigured() {
@@ -230,7 +240,11 @@ func (h *EmailNotificationsHandler) SendTestEmail(c *gin.Context) {
 		c.JSON(status, gin.H{"error": err.Error(), "result": result})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "correo de prueba enviado", "result": result, "configured": h.svc.SMTPConfigured()})
+	message := "correo de prueba enviado"
+	if req.AllFormats {
+		message = fmt.Sprintf("%d correos de prueba enviados (uno por tipo de aviso)", result.SentCount)
+	}
+	c.JSON(http.StatusOK, gin.H{"message": message, "result": result, "configured": h.svc.SMTPConfigured()})
 }
 
 type sendEmailNotificationReq struct {

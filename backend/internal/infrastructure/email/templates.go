@@ -65,15 +65,50 @@ func typeLabel(t string) string {
 	}
 }
 
-func RenderNotification(subject, title, message, notifType string) (string, string, string) {
-	if subject == "" {
-		subject = fmt.Sprintf("MyRent Go — %s", typeLabel(notifType))
+func displayHeadline(title, category, fallback string) string {
+	t := strings.TrimSpace(title)
+	c := strings.TrimSpace(category)
+	if t == "" || strings.EqualFold(t, c) {
+		if fb := strings.TrimSpace(fallback); fb != "" {
+			return fb
+		}
+		return c
 	}
-	escapedTitle := html.EscapeString(title)
-	escapedMessage := html.EscapeString(message)
-	escapedType := html.EscapeString(typeLabel(notifType))
+	return t
+}
 
-	text := fmt.Sprintf("%s\n\n%s\n\nTipo: %s\n\n— MyRent Go — Administración de propiedades", title, message, typeLabel(notifType))
+func maintenanceHeadline(title string, ctx MaintenanceContext) string {
+	fallback := strings.TrimSpace(ctx.Title)
+	if fallback != "" && strings.TrimSpace(ctx.PropertyName) != "" {
+		fallback = fallback + " — " + ctx.PropertyName
+	} else if fallback == "" {
+		fallback = ctx.PropertyName
+	}
+	return displayHeadline(title, typeLabel(string(domainnotif.TypeMaintenanceDue)), fallback)
+}
+
+func maintenanceSubject(title string, ctx MaintenanceContext) string {
+	headline := maintenanceHeadline(title, ctx)
+	if strings.TrimSpace(title) != "" && !strings.EqualFold(strings.TrimSpace(title), typeLabel(string(domainnotif.TypeMaintenanceDue))) {
+		return title
+	}
+	if headline == "" {
+		return "MyRent Go — Recordatorio de mantención"
+	}
+	return "MyRent Go — " + headline
+}
+
+func RenderNotification(subject, title, message, notifType string) (string, string, string) {
+	category := typeLabel(notifType)
+	headline := displayHeadline(title, category, "")
+	if subject == "" {
+		subject = fmt.Sprintf("MyRent Go — %s", headline)
+	}
+	escapedHeadline := html.EscapeString(headline)
+	escapedMessage := html.EscapeString(message)
+	escapedType := html.EscapeString(category)
+
+	text := fmt.Sprintf("%s\n\n%s\n\n— MyRent Go — Administración de propiedades", headline, message)
 	htmlBody := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="es">
 <head><meta charset="UTF-8"></head>
@@ -84,27 +119,29 @@ func RenderNotification(subject, title, message, notifType string) (string, stri
   <p style="white-space:pre-wrap;">%s</p>
   %s
 </body>
-</html>`, emailHeader(), escapedType, escapedTitle, escapedMessage, emailFooter)
+</html>`, emailHeader(), escapedType, escapedHeadline, escapedMessage, emailFooter)
 
 	return subject, htmlBody, text
 }
 
 func RenderRentPaymentNotification(notifType, title, message string, ctx RentPaymentContext) (string, string, string) {
+	category := typeLabel(notifType)
+	headline := displayHeadline(title, category, ctx.PropertyName)
 	subject := title
 	if subject == "" {
-		subject = fmt.Sprintf("MyRent Go — %s", typeLabel(notifType))
+		subject = fmt.Sprintf("MyRent Go — %s", headline)
 	}
 
-	escapedTitle := html.EscapeString(title)
+	escapedHeadline := html.EscapeString(headline)
 	escapedMessage := html.EscapeString(message)
-	escapedType := html.EscapeString(typeLabel(notifType))
+	escapedType := html.EscapeString(category)
 	escapedTenant := html.EscapeString(ctx.TenantName)
 	escapedProperty := html.EscapeString(ctx.PropertyName)
 	escapedAmount := html.EscapeString(ctx.Amount)
 	escapedDue := html.EscapeString(ctx.DueDate)
 
 	text := fmt.Sprintf("%s\n\n%s\n\nArrendatario: %s\nPropiedad: %s\nMonto: %s\nVencimiento: %s\n\n— MyRent Go — Administración de propiedades",
-		title, message, ctx.TenantName, ctx.PropertyName, ctx.Amount, ctx.DueDate)
+		headline, message, ctx.TenantName, ctx.PropertyName, ctx.Amount, ctx.DueDate)
 
 	htmlBody := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="es">
@@ -122,34 +159,34 @@ func RenderRentPaymentNotification(notifType, title, message string, ctx RentPay
   </table>
   %s
 </body>
-</html>`, emailHeader(), escapedType, escapedTitle, escapedMessage, escapedTenant, escapedProperty, escapedAmount, escapedDue, emailFooter)
+</html>`, emailHeader(), escapedType, escapedHeadline, escapedMessage, escapedTenant, escapedProperty, escapedAmount, escapedDue, emailFooter)
 
 	return subject, htmlBody, text
 }
 
 func RenderMaintenanceNotification(title, message string, ctx MaintenanceContext) (string, string, string) {
-	subject := title
-	if subject == "" {
-		subject = "MyRent Go — Recordatorio de mantención"
-	}
+	category := typeLabel(string(domainnotif.TypeMaintenanceDue))
+	headline := maintenanceHeadline(title, ctx)
+	subject := maintenanceSubject(title, ctx)
 
-	escapedTitle := html.EscapeString(title)
+	escapedHeadline := html.EscapeString(headline)
 	escapedMessage := html.EscapeString(message)
 	escapedProperty := html.EscapeString(ctx.PropertyName)
 	escapedMaintTitle := html.EscapeString(ctx.Title)
 	escapedType := html.EscapeString(ctx.TypeLabel)
 	escapedDate := html.EscapeString(ctx.ScheduledDate)
 	escapedCost := html.EscapeString(ctx.Cost)
+	escapedCategory := html.EscapeString(category)
 
 	text := fmt.Sprintf("%s\n\n%s\n\nPropiedad: %s\nMantención: %s\nTipo: %s\nFecha programada: %s\nCosto estimado: %s\n\n— MyRent Go — Administración de propiedades",
-		title, message, ctx.PropertyName, ctx.Title, ctx.TypeLabel, ctx.ScheduledDate, ctx.Cost)
+		headline, message, ctx.PropertyName, ctx.Title, ctx.TypeLabel, ctx.ScheduledDate, ctx.Cost)
 
 	htmlBody := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="es">
 <head><meta charset="UTF-8"></head>
 <body style="font-family:system-ui,sans-serif;line-height:1.5;color:#1a1a1a;max-width:600px;margin:0 auto;padding:24px;">
   %s
-  <p style="font-size:12px;color:#666;text-transform:uppercase;letter-spacing:0.05em;">Recordatorio de mantención</p>
+  <p style="font-size:12px;color:#666;text-transform:uppercase;letter-spacing:0.05em;">%s</p>
   <h1 style="font-size:20px;margin:8px 0 16px;">%s</h1>
   <p style="white-space:pre-wrap;">%s</p>
   <table style="width:100%%;border-collapse:collapse;margin:20px 0;font-size:14px;">
@@ -161,32 +198,35 @@ func RenderMaintenanceNotification(title, message string, ctx MaintenanceContext
   </table>
   %s
 </body>
-</html>`, emailHeader(), escapedTitle, escapedMessage, escapedProperty, escapedMaintTitle, escapedType, escapedDate, escapedCost, emailFooter)
+</html>`, emailHeader(), escapedCategory, escapedHeadline, escapedMessage, escapedProperty, escapedMaintTitle, escapedType, escapedDate, escapedCost, emailFooter)
 
 	return subject, htmlBody, text
 }
 
 func RenderLeaseExpiringNotification(title, message string, ctx LeaseExpiringContext) (string, string, string) {
+	category := typeLabel("lease_expiring")
+	headline := displayHeadline(title, category, ctx.PropertyName)
 	subject := title
 	if subject == "" {
-		subject = "MyRent Go — Contrato de arriendo por vencer"
+		subject = fmt.Sprintf("MyRent Go — %s", headline)
 	}
 
-	escapedTitle := html.EscapeString(title)
+	escapedHeadline := html.EscapeString(headline)
 	escapedMessage := html.EscapeString(message)
 	escapedTenant := html.EscapeString(ctx.TenantName)
 	escapedProperty := html.EscapeString(ctx.PropertyName)
 	escapedEnd := html.EscapeString(ctx.EndDate)
+	escapedCategory := html.EscapeString(category)
 
 	text := fmt.Sprintf("%s\n\n%s\n\nArrendatario: %s\nPropiedad: %s\nFin de contrato: %s\n\nPor favor responda a este correo indicando si desea continuar con el arriendo.\n\n— MyRent Go — Administración de propiedades",
-		title, message, ctx.TenantName, ctx.PropertyName, ctx.EndDate)
+		headline, message, ctx.TenantName, ctx.PropertyName, ctx.EndDate)
 
 	htmlBody := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="es">
 <head><meta charset="UTF-8"></head>
 <body style="font-family:system-ui,sans-serif;line-height:1.5;color:#1a1a1a;max-width:600px;margin:0 auto;padding:24px;">
   %s
-  <p style="font-size:12px;color:#666;text-transform:uppercase;letter-spacing:0.05em;">Arriendo por vencer</p>
+  <p style="font-size:12px;color:#666;text-transform:uppercase;letter-spacing:0.05em;">%s</p>
   <h1 style="font-size:20px;margin:8px 0 16px;">%s</h1>
   <p style="white-space:pre-wrap;">%s</p>
   <table style="width:100%%;border-collapse:collapse;margin:20px 0;font-size:14px;">
@@ -197,9 +237,104 @@ func RenderLeaseExpiringNotification(title, message string, ctx LeaseExpiringCon
   <p style="font-size:14px;color:#444;">Responda a este correo indicando si desea continuar con el arriendo.</p>
   %s
 </body>
-</html>`, emailHeader(), escapedTitle, escapedMessage, escapedTenant, escapedProperty, escapedEnd, emailFooter)
+</html>`, emailHeader(), escapedCategory, escapedHeadline, escapedMessage, escapedTenant, escapedProperty, escapedEnd, emailFooter)
 
 	return subject, htmlBody, text
+}
+
+// TestNotificationSample holds a rendered notification used to validate email formats.
+type TestNotificationSample struct {
+	Type    string
+	Subject string
+	HTML    string
+	Text    string
+}
+
+func RenderTestNotificationSamples() []TestNotificationSample {
+	sampleRent := RentPaymentContext{
+		TenantName:   "María González",
+		PropertyName: "Edificio Boho - Depto 203",
+		Amount:       "$450.000 CLP",
+		DueDate:      "10/07/2026",
+	}
+	sampleMaint := MaintenanceContext{
+		PropertyName:  "Edificio Boho - Depto 203",
+		Title:         "Termo",
+		TypeLabel:     "Preventiva",
+		ScheduledDate: "01/11/2026",
+		Cost:          "$50.000 CLP",
+	}
+	sampleLease := LeaseExpiringContext{
+		TenantName:   "María González",
+		PropertyName: "Edificio Boho - Depto 203",
+		EndDate:      "31/12/2026",
+	}
+
+	samples := []struct {
+		typ     string
+		render  func() (string, string, string)
+	}{
+		{
+			string(domainnotif.TypePaymentDue),
+			func() (string, string, string) {
+				title, msg := "Recordatorio: arriendo vence en 3 días",
+					"El pago de arriendo de María González (Edificio Boho - Depto 203) por $450.000 CLP vence el 10/07/2026. Quedan 3 días para la fecha de pago."
+				return RenderRentPaymentNotification(string(domainnotif.TypePaymentDue), title, msg, sampleRent)
+			},
+		},
+		{
+			string(domainnotif.TypePaymentOverdue),
+			func() (string, string, string) {
+				title, msg := "Pago de arriendo vencido",
+					"El pago de arriendo de María González (Edificio Boho - Depto 203) por $450.000 CLP con vencimiento el 10/07/2026 no ha sido registrado."
+				return RenderRentPaymentNotification(string(domainnotif.TypePaymentOverdue), title, msg, sampleRent)
+			},
+		},
+		{
+			string(domainnotif.TypeLateInterest),
+			func() (string, string, string) {
+				title, msg := "Pago vencido — se aplicarán multas",
+					"El pago de arriendo de María González (Edificio Boho - Depto 203) por $450.000 CLP lleva más de 5 días sin pagarse."
+				return RenderRentPaymentNotification(string(domainnotif.TypeLateInterest), title, msg, sampleRent)
+			},
+		},
+		{
+			"dividend_due",
+			func() (string, string, string) {
+				title, msg := "Dividendo hipotecario por vencer",
+					"El dividendo de Edificio Boho - Depto 203 vence el 05/07/2026. Monto estimado: $320.000 CLP."
+				return RenderNotification("", title, msg, "dividend_due")
+			},
+		},
+		{
+			string(domainnotif.TypeLeaseExpiring),
+			func() (string, string, string) {
+				title, msg := "Contrato de arriendo por vencer",
+					"El contrato de arriendo de María González en Edificio Boho - Depto 203 finaliza el 31/12/2026 (en 30 días)."
+				return RenderLeaseExpiringNotification(title, msg, sampleLease)
+			},
+		},
+		{
+			string(domainnotif.TypeMaintenanceDue),
+			func() (string, string, string) {
+				title, msg := "Recordatorio de mantención",
+					"La mantención «Termo» en Edificio Boho - Depto 203 (Preventiva) está programada para el 01/11/2026. Costo estimado: $50.000 CLP."
+				return RenderMaintenanceNotification(title, msg, sampleMaint)
+			},
+		},
+	}
+
+	out := make([]TestNotificationSample, 0, len(samples))
+	for _, s := range samples {
+		subject, htmlBody, textBody := s.render()
+		out = append(out, TestNotificationSample{
+			Type:    s.typ,
+			Subject: subject,
+			HTML:    htmlBody,
+			Text:    textBody,
+		})
+	}
+	return out
 }
 
 func RenderPasswordResetPIN(firstName, pin string, expiresAt time.Time, adminInitiated bool) (string, string, string) {

@@ -7,6 +7,7 @@ import {
   PAYMENT_BANK_OTHER,
   type BankOption,
 } from '@/lib/payment-banks'
+import { filledControlClass } from '@/lib/utils'
 
 type PaymentBankSelectProps = {
   value: string
@@ -45,6 +46,7 @@ export function PaymentBankSelect({ value, onChange, options, placeholder }: Pay
             onChange(next)
           }
         }}
+        className={filledControlClass(selectValue !== '' || (otherMode && value.trim() !== ''))}
       >
         <option value="">—</option>
         {options.map((b) => (
@@ -57,6 +59,7 @@ export function PaymentBankSelect({ value, onChange, options, placeholder }: Pay
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder ?? t('dividends.paymentBankCustomPlaceholder')}
+          className={filledControlClass(value.trim() !== '')}
         />
       )}
     </div>

@@ -257,10 +257,10 @@ const resources = {
         syncFromLeases: 'Agregar desde arriendos',
         syncConfirmTitle: 'Agregar destinatarios desde arriendos',
         syncConfirmMessage:
-          'Se crearán destinatarios vinculados para cada propiedad con arriendo activo cuyo arrendatario tenga correo configurado. Solo se agregan los que aún no existen.',
+          'Se crearán o actualizarán destinatarios vinculados para cada propiedad con arriendo activo cuyo arrendatario tenga correo configurado. Los existentes recibirán tipos de aviso faltantes (p. ej. mantención).',
         syncConfirmLabel: 'Agregar',
         syncResult:
-          '{{created}} creados, {{alreadyExists}} ya existían, {{skippedNoEmail}} arriendos sin correo, {{skipped}} omitidos',
+          '{{created}} creados, {{updated}} actualizados, {{alreadyExists}} ya existían, {{skippedNoEmail}} arriendos sin correo, {{skipped}} omitidos',
       },
       crm: {
         addContact: 'Agregar contacto',
@@ -531,10 +531,10 @@ const resources = {
         syncFromLeases: 'Add from leases',
         syncConfirmTitle: 'Add recipients from leases',
         syncConfirmMessage:
-          'Linked recipients will be created for each property with an active lease whose tenant has an email configured. Only missing recipients are added.',
+          'Linked recipients will be created or updated for each property with an active lease whose tenant has an email configured. Existing recipients will receive any missing notification types (e.g. maintenance).',
         syncConfirmLabel: 'Add',
         syncResult:
-          '{{created}} created, {{alreadyExists}} already existed, {{skippedNoEmail}} leases without email, {{skipped}} skipped',
+          '{{created}} created, {{updated}} updated, {{alreadyExists}} already existed, {{skippedNoEmail}} leases without email, {{skipped}} skipped',
       },
       crm: {
         addContact: 'Add contact',

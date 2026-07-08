@@ -124,6 +124,17 @@ func (s *Service) resolveNotificationRecipients(ctx context.Context, orgID strin
 			return nil, err
 		}
 		if len(emails) == 0 {
+			notifCtx := notificationContextFrom(n)
+			if ensured, ensureErr := s.ensurePropertyRecipientFromLease(ctx, orgID, notifCtx.propertyID); ensureErr != nil {
+				return nil, ensureErr
+			} else if ensured {
+				emails, err = s.recipientEmailsForNotification(ctx, orgID, notifType, n)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		if len(emails) == 0 {
 			return nil, s.maintenanceRecipientsError(ctx, orgID, n, notifType)
 		}
 		return emails, nil

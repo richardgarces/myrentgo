@@ -56,6 +56,23 @@ function isRentPagePayment(p: Payment): boolean {
   return p.type !== 'dividend'
 }
 
+function effectivePaymentStatus(p: Payment): string {
+  if (p.status === 'pending' && p.due_date) {
+    const due = new Date(p.due_date)
+    if (!Number.isNaN(due.getTime()) && due.getTime() < Date.now()) {
+      return 'overdue'
+    }
+  }
+  return p.status
+}
+
+const paymentStatusLabels: Record<string, string> = {
+  pending: 'Pendiente',
+  paid: 'Pagado',
+  overdue: 'Vencido',
+  cancelled: 'Cancelado',
+}
+
 function formatPaymentDescription(p: Payment): string {
   switch (p.type) {
     case 'rent': {
@@ -117,7 +134,7 @@ export function PaymentsPage() {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [form, setForm] = useState(emptyForm)
 
-  const { data, isLoading } = useQuery({ queryKey: ['payments'], queryFn: () => api.getPayments() })
+  const { data, isLoading } = useQuery({ queryKey: ['payments'], queryFn: () => api.getPayments(1, undefined, 500) })
   const { data: properties } = useQuery({ queryKey: ['properties'], queryFn: () => api.getProperties() })
   const { data: leases } = useQuery({ queryKey: ['leases'], queryFn: () => api.getLeases() })
   const { data: tenants } = useQuery({ queryKey: ['tenants'], queryFn: () => api.getTenants() })
@@ -248,7 +265,7 @@ export function PaymentsPage() {
   const [viewMode, setViewMode] = useViewMode('payments', 'tabla')
 
   const markPaidButton = (p: Payment) => (
-    (p.status === 'pending' || p.status === 'overdue') ? (
+    (effectivePaymentStatus(p) === 'pending' || effectivePaymentStatus(p) === 'overdue') ? (
       <Button size="sm" variant="outline" onClick={() => markPaid.mutate(p.id)}>Marcar pagado</Button>
     ) : null
   )
@@ -293,7 +310,7 @@ export function PaymentsPage() {
                   <CardHeader className="pb-2">
                     <div className="flex items-start justify-between gap-2">
                       <CardTitle className="text-base">{formatPaymentDescription(p)}</CardTitle>
-                      <StatusBadge status={p.status} />
+                      <StatusBadge status={effectivePaymentStatus(p)} label={paymentStatusLabels[effectivePaymentStatus(p)] ?? effectivePaymentStatus(p)} />
                     </div>
                     <p className="text-xs text-muted-foreground">{paymentTypeLabels[p.type] ?? p.type}</p>
                   </CardHeader>
@@ -322,7 +339,7 @@ export function PaymentsPage() {
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     <span className="font-medium">{formatCurrency(p.amount.amount, p.amount.currency)}</span>
-                    <StatusBadge status={p.status} />
+                    <StatusBadge status={effectivePaymentStatus(p)} label={paymentStatusLabels[effectivePaymentStatus(p)] ?? effectivePaymentStatus(p)} />
                     {markPaidButton(p)}
                   </div>
                 </DataListItem>
@@ -348,7 +365,12 @@ export function PaymentsPage() {
                       <td className="p-4">{paymentTypeLabels[p.type] ?? p.type}</td>
                       <td className="p-4 text-muted-foreground">{formatPaymentDescription(p)}</td>
                       <td className="p-4">{p.tenant_id ? tenantMap.get(p.tenant_id) ?? '—' : '—'}</td>
-                      <td className="p-4"><StatusBadge status={p.status} /></td>
+                      <td className="p-4">
+                        <StatusBadge
+                          status={effectivePaymentStatus(p)}
+                          label={paymentStatusLabels[effectivePaymentStatus(p)] ?? effectivePaymentStatus(p)}
+                        />
+                      </td>
                       <td className="p-4 font-medium">
                         {formatCurrency(p.amount.amount, p.amount.currency)}
                       </td>

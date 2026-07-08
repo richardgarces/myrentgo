@@ -5,6 +5,13 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+/** Texto verde claro con buen contraste en fondo oscuro cuando el campo tiene valor. */
+export function filledControlClass(hasValue: boolean) {
+  return hasValue
+    ? 'text-emerald-600 dark:text-emerald-300 border-emerald-600/40 dark:border-emerald-500/40'
+    : undefined
+}
+
 export function formatCurrency(amount: number, currency = 'CLP') {
   return new Intl.NumberFormat('es-CL', { style: 'currency', currency }).format(amount)
 }
@@ -53,11 +60,16 @@ export function formatMonthLabel(month: string, locale = 'es-CL'): string {
 export function hasMortgageCredit(financials?: {
   monthly_mortgage_uf?: number
   debt_uf?: number
+  original_loan_uf?: number
   bank_name?: string
+  credit_number?: string
 }): boolean {
   if (!financials) return false
   if ((financials.monthly_mortgage_uf ?? 0) > 0) return true
-  return (financials.debt_uf ?? 0) > 0 && Boolean(financials.bank_name?.trim())
+  if ((financials.original_loan_uf ?? 0) > 0) return true
+  if ((financials.debt_uf ?? 0) > 0) return true
+  if (financials.credit_number?.trim()) return true
+  return Boolean(financials.bank_name?.trim())
 }
 
 export function dividendDueDateForMonth(month: string, paymentStartDate?: string): string {

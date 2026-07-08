@@ -52,11 +52,14 @@ export function FormField({ label, children }: { label: string; children: React.
   )
 }
 
-export function FormSelect(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
+export function FormSelect({ className, ...props }: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
       {...props}
-      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className={cn(
+        'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        className,
+      )}
     />
   )
 }

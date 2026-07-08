@@ -271,8 +271,11 @@ func (r *DashboardRepo) occupiedPropertyCount(ctx context.Context, orgID string)
 
 func (r *DashboardRepo) overduePaymentCount(ctx context.Context, orgID string) (int64, error) {
 	now := time.Now().UTC()
+	// Solo arriendos: "Morosos" debe coincidir con el historial de pagos de arriendo,
+	// no con dividendos u otros tipos de pago.
 	return r.db.Collection("payments").CountDocuments(ctx, bson.M{
 		"organization_id": orgID,
+		"type":            "rent",
 		"$or": bson.A{
 			bson.M{"status": "overdue"},
 			bson.M{"status": "pending", "due_date": bson.M{"$lt": now}},

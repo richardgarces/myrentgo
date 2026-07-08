@@ -14,11 +14,37 @@ import { EmptyState, LoadingSkeleton, PageHeader } from '@/components/ui/page'
 import { PinConfirmDialog } from '@/components/ui/pin-confirm-dialog'
 import { UFIndicatorNote, UFWithCLP } from '@/components/UFWithCLP'
 import { useViewMode } from '@/hooks/useViewMode'
-import { api, type Mortgage, type MortgagePayload } from '@/lib/api'
+import { api, type Mortgage, type MortgagePayload, type Property } from '@/lib/api'
 import { buildBankOptions } from '@/lib/payment-banks'
 import { invalidateAfterMutation } from '@/lib/query-options'
-import { formatCurrency, formatMonthLabel, formatUF, hasMortgageCredit } from '@/lib/utils'
+import { formatCurrency, formatMonthLabel, formatUF, filledControlClass, hasMortgageCredit, cn } from '@/lib/utils'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+
+/** Construye la vista de crédito desde la ficha de la propiedad (fuente de verdad). */
+function propertyToMortgage(p: Property): Mortgage {
+  const f = p.financials
+  return {
+    id: p.id,
+    property_id: p.id,
+    property_name: p.name,
+    bank_name: f?.bank_name,
+    original_loan_uf: f?.original_loan_uf,
+    commercial_value_uf: f?.commercial_value_uf,
+    debt_uf: f?.debt_uf,
+    monthly_mortgage_uf: f?.monthly_mortgage_uf,
+    loan_term_years: f?.loan_term_years,
+    installments_paid: f?.installments_paid,
+    interest_rate: f?.interest_rate,
+    credit_number: f?.credit_number,
+    payment_bank: f?.payment_bank,
+    pac_enabled: f?.pac_enabled,
+    payment_start_date: f?.payment_start_date,
+    loan_amount: { amount: 0 },
+    monthly_payment: { amount: 0 },
+    present_value: 0,
+    active: hasMortgageCredit(f),
+  }
+}
 
 const emptyMortgageForm = {
   property_id: '',
@@ -86,6 +112,7 @@ function MortgageFormFields({
   editing: boolean
 }) {
   const { t } = useTranslation()
+  const filled = filledControlClass
 
   return (
     <>
@@ -95,6 +122,7 @@ function MortgageFormFields({
             required
             value={form.property_id}
             onChange={(e) => setForm({ ...form, property_id: e.target.value })}
+            className={filled(Boolean(form.property_id))}
           >
             <option value="">—</option>
             {propertyOptions.map((p) => (
@@ -112,6 +140,7 @@ function MortgageFormFields({
             value={form.original_loan_uf}
             onChange={(e) => setForm({ ...form, original_loan_uf: e.target.value })}
             placeholder="2000"
+            className={filled(form.original_loan_uf.trim() !== '')}
           />
           {(Number(form.original_loan_uf) || 0) > 0 && (
             <UFWithCLP amount={Number(form.original_loan_uf)} valueClassName="text-xs text-muted-foreground" />
@@ -125,6 +154,7 @@ function MortgageFormFields({
             value={form.debt_uf}
             onChange={(e) => setForm({ ...form, debt_uf: e.target.value })}
             placeholder="1800"
+            className={filled(form.debt_uf.trim() !== '')}
           />
           {(Number(form.debt_uf) || 0) > 0 && (
             <UFWithCLP amount={Number(form.debt_uf)} valueClassName="text-xs text-muted-foreground" />
@@ -138,6 +168,7 @@ function MortgageFormFields({
             value={form.monthly_mortgage_uf}
             onChange={(e) => setForm({ ...form, monthly_mortgage_uf: e.target.value })}
             placeholder="11.5"
+            className={filled(form.monthly_mortgage_uf.trim() !== '')}
           />
           {(Number(form.monthly_mortgage_uf) || 0) > 0 && (
             <UFWithCLP amount={Number(form.monthly_mortgage_uf)} valueClassName="text-xs text-muted-foreground" />
@@ -152,6 +183,7 @@ function MortgageFormFields({
           value={form.commercial_value_uf}
           onChange={(e) => setForm({ ...form, commercial_value_uf: e.target.value })}
           placeholder="3200"
+          className={filled(form.commercial_value_uf.trim() !== '')}
         />
         {(Number(form.commercial_value_uf) || 0) > 0 && (
           <UFWithCLP amount={Number(form.commercial_value_uf)} valueClassName="text-xs text-muted-foreground" />
@@ -162,6 +194,7 @@ function MortgageFormFields({
           type="date"
           value={form.payment_start_date}
           onChange={(e) => setForm({ ...form, payment_start_date: e.target.value })}
+          className={filled(form.payment_start_date.trim() !== '')}
         />
       </FormField>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -173,6 +206,7 @@ function MortgageFormFields({
             value={form.loan_term_years}
             onChange={(e) => setForm({ ...form, loan_term_years: e.target.value })}
             placeholder="30"
+            className={filled(form.loan_term_years.trim() !== '')}
           />
         </FormField>
         <FormField label={t('finance.mortgage.installmentsPaid')}>
@@ -183,6 +217,7 @@ function MortgageFormFields({
             value={form.installments_paid}
             onChange={(e) => setForm({ ...form, installments_paid: e.target.value })}
             placeholder="24"
+            className={filled(form.installments_paid.trim() !== '')}
           />
         </FormField>
         <FormField label={t('finance.mortgage.interestRate')}>
@@ -193,6 +228,7 @@ function MortgageFormFields({
             value={form.interest_rate}
             onChange={(e) => setForm({ ...form, interest_rate: e.target.value })}
             placeholder="4.5"
+            className={filled(form.interest_rate.trim() !== '')}
           />
         </FormField>
       </div>
@@ -202,6 +238,7 @@ function MortgageFormFields({
             value={form.bank_name}
             onChange={(e) => setForm({ ...form, bank_name: e.target.value })}
             placeholder="Banco de Chile"
+            className={filled(form.bank_name.trim() !== '')}
           />
         </FormField>
         <FormField label={t('finance.mortgage.creditNumber')}>
@@ -209,6 +246,7 @@ function MortgageFormFields({
             value={form.credit_number}
             onChange={(e) => setForm({ ...form, credit_number: e.target.value })}
             placeholder="1234567890"
+            className={filled(form.credit_number.trim() !== '')}
           />
         </FormField>
       </div>
@@ -222,7 +260,12 @@ function MortgageFormFields({
           />
         </FormField>
         <FormField label={t('dividends.pac')}>
-          <label className="flex items-center gap-2 h-10 text-sm">
+          <label
+            className={cn(
+              'flex items-center gap-2 h-10 text-sm',
+              form.pac_enabled && 'text-emerald-600 dark:text-emerald-300',
+            )}
+          >
             <input
               type="checkbox"
               checked={form.pac_enabled}
@@ -273,11 +316,11 @@ export function FinancePage() {
     queryKey: ['dashboard'],
     queryFn: () => api.getDashboard(),
   })
-  const { data: mortgages, isLoading: mLoading } = useQuery({
+  const { data: mortgages } = useQuery({
     queryKey: ['mortgages'],
-    queryFn: () => api.getMortgages(1, 200),
+    queryFn: () => api.getMortgages(1, 500),
   })
-  const { data: properties } = useQuery({
+  const { data: properties, isLoading: propertiesLoading } = useQuery({
     queryKey: ['properties'],
     queryFn: () => api.getProperties({ limit: 500 }),
   })
@@ -291,11 +334,36 @@ export function FinancePage() {
     [crmBanks?.data],
   )
 
-  const mortgageList = mortgages?.data ?? []
+  // Fuente de verdad: créditos registrados en propiedades. El endpoint /mortgages
+  // aporta equivalentes en CLP / valor presente cuando está disponible.
+  const mortgageList = useMemo(() => {
+    const fromProps = (properties?.data ?? [])
+      .filter((p) => hasMortgageCredit(p.financials))
+      .map(propertyToMortgage)
+      .sort((a, b) => a.property_name.localeCompare(b.property_name, 'es'))
+    if (!fromProps.length) {
+      return (mortgages?.data ?? []).slice().sort((a, b) =>
+        a.property_name.localeCompare(b.property_name, 'es'),
+      )
+    }
+    const byId = new Map((mortgages?.data ?? []).map((m) => [m.property_id, m]))
+    return fromProps.map((m) => {
+      const enriched = byId.get(m.property_id)
+      if (!enriched) return m
+      return {
+        ...m,
+        present_value: enriched.present_value || m.present_value,
+        loan_amount: enriched.loan_amount ?? m.loan_amount,
+        monthly_payment: enriched.monthly_payment ?? m.monthly_payment,
+        commercial_value: enriched.commercial_value ?? m.commercial_value,
+      }
+    })
+  }, [properties?.data, mortgages?.data])
+
   const propertyOptions = useMemo(() => {
     const withCredit = new Set(mortgageList.map((m) => m.property_id))
     return (properties?.data ?? [])
-      .filter((p) => !withCredit.has(p.id) && !hasMortgageCredit(p.financials))
+      .filter((p) => !withCredit.has(p.id))
       .map((p) => ({ id: p.id, name: p.name }))
   }, [properties?.data, mortgageList])
 
@@ -332,7 +400,7 @@ export function FinancePage() {
     },
   })
 
-  if ((dashLoading && !dash) || mLoading) return <LoadingSkeleton />
+  if ((dashLoading && !dash) || (propertiesLoading && !properties)) return <LoadingSkeleton />
 
   const cashFlow = [
     { name: 'Ingresos', value: dash?.monthly_income ?? 0 },
@@ -529,7 +597,16 @@ export function FinancePage() {
         </CardHeader>
         <CardContent className={mortgageView === 'tabla' ? 'p-0' : undefined}>
           {!mortgageList.length ? (
-            <EmptyState message={t('finance.mortgage.empty')} />
+            <div className="p-8 text-center space-y-2">
+              <EmptyState message={t('finance.mortgage.empty')} />
+              <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                Los créditos se toman de las fichas de propiedad. Completa dividendo, deuda o institución en{' '}
+                <Link to="/properties" className="underline underline-offset-2 font-medium">
+                  Propiedades
+                </Link>
+                , o usa «Agregar crédito» aquí.
+              </p>
+            </div>
           ) : mortgageView === 'tarjetas' ? (
             <DataCardGrid>
               {mortgageList.map((m) => (

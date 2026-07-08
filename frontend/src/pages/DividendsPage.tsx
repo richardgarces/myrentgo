@@ -18,7 +18,7 @@ import { useViewMode } from '@/hooks/useViewMode'
 import { useTableSort } from '@/hooks/useTableSort'
 import { api, type DividendPayment, type Property } from '@/lib/api'
 import { buildBankOptions, resolveBankId } from '@/lib/payment-banks'
-import { cn, dividendDueDateForMonth, formatDate, formatMonthLabel, formatUF, hasMortgageCredit } from '@/lib/utils'
+import { cn, dividendDueDateForMonth, formatDate, formatMonthLabel, formatUF } from '@/lib/utils'
 
 const emptyForm = {
   property_id: '',
@@ -136,7 +136,7 @@ export function DividendsPage() {
   )
 
   const mortgageProperties = useMemo(
-    () => (properties?.data ?? []).filter((p) => hasMortgageCredit(p.financials)),
+    () => (properties?.data ?? []).filter((p) => (p.financials?.monthly_mortgage_uf ?? 0) > 0),
     [properties],
   )
 

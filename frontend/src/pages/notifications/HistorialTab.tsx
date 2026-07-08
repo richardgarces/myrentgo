@@ -11,7 +11,7 @@ import { PinConfirmDialog } from '@/components/ui/pin-confirm-dialog'
 import { EmptyState, LoadingSkeleton, StatusBadge } from '@/components/ui/page'
 import { useViewMode } from '@/hooks/useViewMode'
 import { api, type Lease, type Property, type TenantNotification } from '@/lib/api'
-import { formatNotificationError } from '@/lib/notification-errors'
+import { formatNotificationError, isNoRecipientsError } from '@/lib/notification-errors'
 import { formatDate } from '@/lib/utils'
 import { NoRecipientsBanner } from '@/pages/notifications/NoRecipientsBanner'
 
@@ -176,6 +176,14 @@ export function HistorialTab() {
   const [viewMode, setViewMode] = useViewMode('notifications-historial', 'tabla')
   const notifications = data?.data ?? []
 
+  const failedRecipientWarning = useMemo(() => {
+    const failed = notifications.find(
+      (n) => n.status === 'failed' && isNoRecipientsError(n.metadata?.error_message),
+    )
+    if (!failed?.metadata?.error_message) return null
+    return formatNotificationError(failed.metadata.error_message) ?? failed.metadata.error_message
+  }, [notifications])
+
   const notificationActions = (n: TenantNotification) => (
     <div className="flex flex-wrap gap-2 justify-end">
       {n.channel === 'email' && (n.status === 'pending' || n.status === 'failed') && (
@@ -220,6 +228,10 @@ export function HistorialTab() {
 
       {actionError && (
         <NoRecipientsBanner message={actionError} />
+      )}
+
+      {!actionError && failedRecipientWarning && (
+        <NoRecipientsBanner message={failedRecipientWarning} />
       )}
 
       <Card>
@@ -352,7 +364,7 @@ export function HistorialTab() {
                           <StatusBadge status={n.status} label={statusLabels[n.status] ?? n.status} />
                           {n.status === 'failed' && formatNotificationError(n.metadata?.error_message) && (
                             <p
-                              className="text-xs text-muted-foreground max-w-[220px]"
+                              className="text-xs text-muted-foreground max-w-xs line-clamp-3"
                               title={formatNotificationError(n.metadata?.error_message)}
                             >
                               {formatNotificationError(n.metadata?.error_message)}

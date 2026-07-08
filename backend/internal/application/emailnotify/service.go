@@ -58,7 +58,7 @@ type SendResult struct {
 	Errors      []string `json:"errors,omitempty"`
 }
 
-func (s *Service) SendTest(ctx context.Context, orgID, recipientID, emailAddr string) (*SendResult, error) {
+func (s *Service) SendTest(ctx context.Context, orgID, recipientID, emailAddr string, allFormats bool) (*SendResult, error) {
 	var name, to string
 	if recipientID != "" {
 		rec, err := s.recipients.FindByID(ctx, orgID, recipientID)
@@ -82,6 +82,10 @@ func (s *Service) SendTest(ctx context.Context, orgID, recipientID, emailAddr st
 		return nil, fmt.Errorf("no email address")
 	}
 
+	if allFormats {
+		return s.sendTestAllFormats(ctx, to)
+	}
+
 	subject, htmlBody, textBody := email.RenderTestEmail(name)
 	if err := s.mailer.Send(ctx, email.Message{
 		To:       []string{to},
@@ -92,6 +96,29 @@ func (s *Service) SendTest(ctx context.Context, orgID, recipientID, emailAddr st
 		return &SendResult{FailedCount: 1, Errors: []string{err.Error()}}, err
 	}
 	return &SendResult{SentCount: 1, Recipients: []string{to}}, nil
+}
+
+func (s *Service) sendTestAllFormats(ctx context.Context, to string) (*SendResult, error) {
+	result := &SendResult{Recipients: []string{to}}
+	for _, sample := range email.RenderTestNotificationSamples() {
+		label := NotificationTypeLabel(sample.Type)
+		subject := fmt.Sprintf("[Prueba] %s — %s", label, sample.Subject)
+		if err := s.mailer.Send(ctx, email.Message{
+			To:       []string{to},
+			Subject:  subject,
+			HTMLBody: sample.HTML,
+			TextBody: sample.Text,
+		}); err != nil {
+			result.FailedCount++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %s", label, err.Error()))
+			continue
+		}
+		result.SentCount++
+	}
+	if result.SentCount == 0 && result.FailedCount > 0 {
+		return result, fmt.Errorf("no se pudo enviar ningún correo de prueba")
+	}
+	return result, nil
 }
 
 func (s *Service) SendPending(ctx context.Context, orgID string) (*SendResult, error) {

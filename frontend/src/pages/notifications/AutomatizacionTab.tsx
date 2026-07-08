@@ -8,6 +8,8 @@ import { api } from '@/lib/api'
 import {
   formatNotificationError,
   formatSchedulerErrors,
+  findFirstNoRecipientsError,
+  isNoRecipientsError,
   schedulerHasNoRecipientsError,
 } from '@/lib/notification-errors'
 import { NoRecipientsBanner } from '@/pages/notifications/NoRecipientsBanner'
@@ -46,10 +48,11 @@ export function AutomatizacionTab() {
       const sent = res.result?.sent_count ?? 0
       const failed = res.result?.failed_count ?? 0
       const errors = formatSchedulerErrors(res.result?.errors)
-      if (failed > 0 && errors.some((e) => e.includes('destinatarios habilitados'))) {
+      if (failed > 0 && errors.some(isNoRecipientsError)) {
         setFeedback({
           message: sent > 0 ? `Se enviaron notificaciones a ${sent} destinatario(s)` : 'No se pudieron enviar las notificaciones pendientes.',
-          recipientWarning: errors[0] ?? 'Configura destinatarios para los tipos de aviso correspondientes.',
+          recipientWarning: findFirstNoRecipientsError(res.result?.errors)
+            ?? 'Configura destinatarios para los tipos de aviso correspondientes.',
           variant: 'warning',
         })
       } else {
@@ -72,9 +75,8 @@ export function AutomatizacionTab() {
       const r = res.result
       const summary = `${r.created} creadas, ${r.sent} enviadas, ${r.skipped} omitidas, ${r.failed} fallidas (${r.checked_payments} pagos, ${r.checked_maintenance ?? 0} mantenciones, ${r.checked_leases ?? 0} contratos revisados)`
       if (schedulerHasNoRecipientsError(r)) {
-        const recipientError = formatSchedulerErrors(r.errors).find((e) =>
-          e.includes('destinatarios habilitados'),
-        )
+        const recipientError = findFirstNoRecipientsError(r.errors)
+          ?? formatSchedulerErrors(r.details?.map((d) => d.message).filter(Boolean) as string[]).find(isNoRecipientsError)
         setFeedback({
           message: summary,
           recipientWarning: recipientError

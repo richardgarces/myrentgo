@@ -213,18 +213,17 @@ func (r *PropertyRepo) List(ctx context.Context, orgID string, filter apppropert
 }
 
 func mortgageCreditFilter(orgID string) bson.M {
+	// Mismo criterio que la ficha de propiedad / hasMortgageCredit:
+	// cualquier dato de crédito hipotecario registrado en financials.
 	return bson.M{
 		"organization_id": orgID,
 		"$or": bson.A{
 			bson.M{"financials.monthly_mortgage_uf": bson.M{"$gt": 0}},
 			bson.M{"financials.monthly_mortgage.amount": bson.M{"$gt": 0}},
 			bson.M{"financials.original_loan_uf": bson.M{"$gt": 0}},
-			bson.M{
-				"$and": bson.A{
-					bson.M{"financials.debt_uf": bson.M{"$gt": 0}},
-					bson.M{"financials.bank_name": bson.M{"$gt": ""}},
-				},
-			},
+			bson.M{"financials.debt_uf": bson.M{"$gt": 0}},
+			bson.M{"financials.credit_number": bson.M{"$gt": ""}},
+			bson.M{"financials.bank_name": bson.M{"$gt": ""}},
 		},
 	}
 }
@@ -233,8 +232,11 @@ func (r *PropertyRepo) ListMortgageCreditPaginated(ctx context.Context, orgID st
 	if page < 1 {
 		page = 1
 	}
-	if limit < 1 || limit > 100 {
+	if limit < 1 {
 		limit = 20
+	}
+	if limit > 500 {
+		limit = 500
 	}
 	query := mortgageCreditFilter(orgID)
 	total, err := r.col.CountDocuments(ctx, query)

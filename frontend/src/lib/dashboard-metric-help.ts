@@ -4,7 +4,7 @@ export const dashboardMetricHelp = {
   occupancy:
     'Porcentaje = (propiedades arrendadas ÷ divisor) × 100. Arrendadas: cada propiedad con al menos un contrato en estado Activo. Divisor: propiedades con destino Para arrendar; si no hay arrendables, se usa el total de propiedades.',
   overdue:
-    'Cantidad de pagos con estado Vencido, o estado Pendiente cuya fecha de vencimiento ya pasó. Incluye cualquier tipo de pago (Arriendo, Gasto, Dividendo hipotecario, etc.).',
+    'Cantidad de pagos de arriendo con estado Vencido, o Pendiente cuya fecha de vencimiento ya pasó. No incluye dividendos ni otros tipos de pago.',
   pendingPayments:
     'Cantidad de arriendos del mes actual sin cobrar. Por cada contrato Activo sin pago de Arriendo del mes se suma 1 y su monto (el pago pendiente registrado o el Arriendo mensual del contrato). El subtítulo muestra el total en pesos de arriendo pendiente.',
   cashFlow:

@@ -127,6 +127,10 @@ export function DestinatariosTab() {
 
   const openCreate = () => {
     resetForm()
+    const allTypes = (types?.data ?? []).map((t) => t.id)
+    if (allTypes.length > 0) {
+      setForm((prev) => ({ ...prev, notification_types: allTypes }))
+    }
     setOpen(true)
   }
 
@@ -194,6 +198,7 @@ export function DestinatariosTab() {
       const r = res.result
       setFeedback(t('recipients.syncResult', {
         created: r.created,
+        updated: r.updated ?? 0,
         alreadyExists: r.already_exists,
         skippedNoEmail: r.skipped_no_email,
         skipped: r.skipped,
@@ -208,11 +213,18 @@ export function DestinatariosTab() {
   })
 
   const sendTest = useMutation({
-    mutationFn: (recipientId: string) => api.sendTestEmail({ recipient_id: recipientId }),
+    mutationFn: (recipientId: string) => api.sendTestEmail({ recipient_id: recipientId, all_formats: true }),
     onSuccess: (res) => {
-      setFeedback(res.message ?? 'Correo de prueba enviado')
+      const sent = res.result?.sent_count ?? 0
+      const failed = res.result?.failed_count ?? 0
       if (!res.configured) {
         setFeedback('SMTP no configurado: completa SMTP_HOST, SMTP_USER, SMTP_PASSWORD y SMTP_FROM en .env')
+        return
+      }
+      if (failed > 0) {
+        setFeedback(res.message ?? `Se enviaron ${sent} correo(s) de prueba, ${failed} fallido(s).`)
+      } else {
+        setFeedback(res.message ?? `${sent} correos de prueba enviados (uno por tipo de aviso).`)
       }
     },
     onError: (err: Error) => setFeedback(err.message),
@@ -227,16 +239,16 @@ export function DestinatariosTab() {
     }))
   }
 
-  const canSaveLinked = form.linkToProperty && form.property_id && selectedProperty?.hasEmail
-  const canSaveInternal = !form.linkToProperty && form.name.trim() && form.email.trim()
+  const canSaveLinked = form.linkToProperty && form.property_id && selectedProperty?.hasEmail && form.notification_types.length > 0
+  const canSaveInternal = !form.linkToProperty && form.name.trim() && form.email.trim() && form.notification_types.length > 0
   const canSave = canSaveLinked || canSaveInternal
   const [viewMode, setViewMode] = useViewMode('notifications-destinatarios', 'tabla')
   const recipients = data?.data ?? []
 
   const recipientActions = (rec: EmailRecipient) => (
     <div className="flex flex-wrap gap-2 justify-end">
-      <Button size="sm" variant="outline" onClick={() => sendTest.mutate(rec.id)} disabled={sendTest.isPending}>
-        Probar
+      <Button size="sm" variant="outline" onClick={() => sendTest.mutate(rec.id)} disabled={sendTest.isPending} title="Envía un correo de prueba por cada tipo de aviso">
+        Probar formatos
       </Button>
       <Button size="sm" variant="outline" onClick={() => openEdit(rec)}>
         Editar
@@ -526,6 +538,9 @@ export function DestinatariosTab() {
               </label>
             ))}
           </div>
+          {form.notification_types.length === 0 && (
+            <p className="mt-2 text-xs text-destructive">Selecciona al menos un tipo de aviso.</p>
+          )}
         </FormField>
         {save.error && (
           <p className="text-sm text-destructive">{(save.error as Error).message}</p>

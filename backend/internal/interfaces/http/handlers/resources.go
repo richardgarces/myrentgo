@@ -1679,7 +1679,8 @@ func propertyToMortgageView(prop domainprop.Property, ufRate float64) propertyMo
 		LoanAmount:        shared.NewMoney(loanCLP, "CLP"),
 		MonthlyPayment:    shared.NewMoney(monthlyCLP, "CLP"),
 		PresentValue:      presentValue,
-		Active:            f.MonthlyMortgageUF > 0 || f.DebtUF > 0 || f.OriginalLoanUF > 0,
+        Active:            f.MonthlyMortgageUF > 0 || f.DebtUF > 0 || f.OriginalLoanUF > 0 ||
+			strings.TrimSpace(f.BankName) != "" || strings.TrimSpace(f.CreditNumber) != "",
 	}
 }
 

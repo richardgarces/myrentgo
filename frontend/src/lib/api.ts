@@ -737,7 +737,7 @@ class ApiClient {
     return this.request<void>(`/users/${id}`, { method: 'DELETE' })
   }
 
-  sendTestEmail(data: { recipient_id?: string; email?: string }) {
+  sendTestEmail(data: { recipient_id?: string; email?: string; all_formats?: boolean }) {
     return this.request<EmailSendResponse>('/notifications/email/test', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -1206,6 +1206,7 @@ export interface EmailNotificationType {
 
 export interface SyncEmailRecipientsFromLeasesResult {
   created: number
+  updated?: number
   skipped_no_email: number
   already_exists: number
   skipped: number

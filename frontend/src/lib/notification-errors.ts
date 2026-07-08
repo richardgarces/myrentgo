@@ -33,6 +33,7 @@ export function formatNotificationError(message?: string): string | undefined {
   if (!message?.trim()) return undefined
 
   if (message.includes('No hay destinatarios habilitados')) return message
+  if (message.includes('No hay destinatarios para «')) return message
   if (message.includes('El arrendatario no tiene correo configurado')) return message
 
   const match = message.match(noRecipientsPattern)
@@ -146,6 +147,11 @@ export function formatMaintenanceBulkFeedback(result?: NotifyResult): {
   }
 
   return { message: summary, variant: 'success' }
+}
+
+export function findFirstNoRecipientsError(errors?: string[]): string | undefined {
+  if (!errors?.length) return undefined
+  return formatSchedulerErrors(errors).find(isNoRecipientsError)
 }
 
 export function schedulerHasNoRecipientsError(result?: {

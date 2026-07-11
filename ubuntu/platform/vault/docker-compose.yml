@@ -1,0 +1,36 @@
+version: "3.8"
+
+# HashiCorp Vault — secretos (modo servidor; no -dev)
+
+services:
+  vault:
+    image: hashicorp/vault:1.18.3
+    container_name: platform-vault
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    environment:
+      # No pasar VAULT_DEV_ROOT_TOKEN_ID aquí: solo vale en -dev y provoca avisos/fallos.
+      VAULT_ADDR: http://127.0.0.1:8200
+      VAULT_API_ADDR: ${VAULT_API_ADDR:-http://127.0.0.1:8200}
+      SKIP_SETCAP: "true"
+    # Un solo proceso vault (evita "address already in use" por entrypoint+restart)
+    entrypoint: ["vault"]
+    command:
+      - server
+      - -config=/vault/config/vault.hcl
+    ports:
+      - "127.0.0.1:${VAULT_PORT:-8200}:8200"
+    volumes:
+      - vault_data:/vault/file
+      - ./vault.hcl:/vault/config/vault.hcl:ro
+    networks:
+      - platform-net
+    user: root
+
+networks:
+  platform-net:
+    external: true
+
+volumes:
+  vault_data:

@@ -1,0 +1,22 @@
+# Caddyfile de borde — plantilla genérica
+# Variables desde docker-compose (SITE_ADDRESS, UPSTREAM, ACME_EMAIL).
+#
+# {$SITE_ADDRESS} {
+#   reverse_proxy {$UPSTREAM}
+# }
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$SITE_ADDRESS} {
+	encode gzip zstd
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+	reverse_proxy {$UPSTREAM}
+}

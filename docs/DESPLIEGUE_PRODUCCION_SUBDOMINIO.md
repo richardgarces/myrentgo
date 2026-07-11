@@ -1,8 +1,12 @@
 # Despliegue en producción con subdominio — MyRent Go
 
-Guía paso a paso para publicar **MyRent Go** en un VPS con Docker, dominio **meincart.com** en Cloudflare y subdominio dedicado (por ejemplo `app.meincart.com`).
+Guía paso a paso para publicar **MyRent Go** en un VPS con Docker, dominio **meincart.com** en Cloudflare y subdominio dedicado (por ejemplo `rent.meincart.com`).
 
-> **Documentos relacionados:** [PRODUCTION.md](./PRODUCTION.md) · [Cloudflare](./Cloudflare/README.md) · [CHECKLIST_PRODUCCION.md](./CHECKLIST_PRODUCCION.md) · [.env.production.example](../.env.production.example)
+> **Documentos relacionados:** [DIA1_PRODUCCION_APP_MEINCART.md](./DIA1_PRODUCCION_APP_MEINCART.md) (checklist día 1) · [PRODUCTION.md](./PRODUCTION.md) · [Cloudflare](./Cloudflare/README.md) · [CHECKLIST_PRODUCCION.md](./CHECKLIST_PRODUCCION.md) · [Kit Ubuntu genérico](../ubuntu/README.md) · [.env.production.example](../.env.production.example)
+>
+> **Camino por defecto:** 1 VPS + Cloudflare Free + SMTP gratuito (**Brevo / SendGrid / Gmail**). **Mailcow** es opcional y queda fuera del día 1.
+>
+> **Preparación del host:** usa el kit [`ubuntu/`](../ubuntu/README.md) (paso 0 ZIP/SSH desde tu PC → menús SO/SSH/UFW/Docker en el servidor). Es genérico y reutilizable en otros productos.
 
 ## Tabla de contenidos
 
@@ -13,13 +17,15 @@ Guía paso a paso para publicar **MyRent Go** en un VPS con Docker, dominio **me
 5. [Archivo `.env` de producción](#5-archivo-env-de-producción)
 6. [Build y despliegue](#6-build-y-despliegue)
 7. [Caddy / Nginx (reverse proxy)](#7-caddy--nginx-reverse-proxy)
-8. [SMTP real (correo saliente)](#8-smtp-real-correo-saliente)
+8. [SMTP gratuito (correo saliente)](#8-smtp-gratuito-correo-saliente--camino-por-defecto)
 9. [Seed del usuario administrador](#9-seed-del-usuario-administrador)
 10. [Verificación post-despliegue](#10-verificación-post-despliegue)
 11. [Backups](#11-backups)
 12. [Monitoreo](#12-monitoreo)
 13. [Actualizaciones](#13-actualizaciones)
 14. [Solución de problemas](#14-solución-de-problemas)
+
+> Checklist condensada del día 1: **[DIA1_PRODUCCION_APP_MEINCART.md](./DIA1_PRODUCCION_APP_MEINCART.md)**
 
 ---
 
@@ -34,7 +40,7 @@ graph TB
     end
 
     subgraph Cloudflare["Cloudflare (meincart.com)"]
-        DNS[DNS app.meincart.com]
+        DNS[DNS rent.meincart.com]
         SSL[SSL edge + WAF]
     end
 
@@ -46,7 +52,7 @@ graph TB
         VOL[(Volumen api_storage<br/>documentos)]
     end
 
-    SMTP[Proveedor SMTP<br/>SendGrid / Gmail / Mailcow]
+    SMTP[Proveedor SMTP gratuito<br/>Brevo / SendGrid / Gmail]
 
     U --> DNS --> SSL --> Caddy
     Caddy -->|"/"| FE
@@ -84,6 +90,8 @@ graph TB
 - **OpenSSL** (suele venir instalado) para generar secretos
 - Acceso **SSH** con clave pública (deshabilitar login por contraseña en producción)
 
+Instalación guiada (recomendado): kit [`ubuntu/`](../ubuntu/README.md) — desde tu PC `./ubuntu/push-to-server.sh`, en el servidor `sudo ./bootstrap.sh` (menús 1–4).
+
 ### Dominio y DNS
 
 - Dominio **meincart.com** activo en [Cloudflare](https://dash.cloudflare.com) (estado **Active**)
@@ -106,7 +114,7 @@ MongoDB (**27017**) y la API interna (**7070**) **no** se publican en `docker-co
 
 ## 2. Subdominio en Cloudflare
 
-Usaremos **`app.meincart.com`** como subdominio de la aplicación. Alternativas válidas: `myrent.meincart.com`, `renta.meincart.com`, etc.
+Usaremos **`rent.meincart.com`** como subdominio de la aplicación. Alternativas válidas: `myrent.meincart.com`, `renta.meincart.com`, `arriendos.meincart.com`.
 
 ### 2.1 Crear registro DNS
 
@@ -116,12 +124,12 @@ Usaremos **`app.meincart.com`** como subdominio de la aplicación. Alternativas 
 | Campo | Valor |
 |-------|-------|
 | Tipo | `A` |
-| Nombre | `app` |
+| Nombre | `rent` |
 | IPv4 | IP pública de tu VPS (ej. `203.0.113.10`) |
 | Proxy | **Proxied** (nube **naranja**) |
 | TTL | Auto |
 
-3. (Opcional) Redirección `www`: registro `CNAME` `www` → `meincart.com` si usas el apex para otra cosa. Para solo subdominio de app, no es obligatorio.
+3. (Opcional) Redirección `www`: registro `CNAME` `www` → `meincart.com` si usas el apex para otra cosa. Para solo el subdominio `rent`, no es obligatorio.
 
 Detalle de proxy naranja vs gris: [docs/Cloudflare/dns.md](./Cloudflare/dns.md#proxied-vs-dns-only).
 
@@ -144,15 +152,42 @@ No cachear API ni WebSocket. Ver [deploy/cloudflare/README.md](../deploy/cloudfl
 ### 2.4 Comprobar DNS
 
 ```bash
-dig app.meincart.com +short
+dig rent.meincart.com +short
 # Con proxy naranja verás IPs de Cloudflare (no la IP directa del VPS)
 ```
 
 Más ejemplos de registros: [docs/Cloudflare/dns.md § Tabla de registros](./Cloudflare/dns.md#tabla-de-registros-dns-de-ejemplo).
 
+### 2.5 Endurecimiento Cloudflare Free
+
+1. **Security → WAF**: activa el conjunto managed / OWASP disponible en Free.
+2. **Bot Fight Mode**: On (si bloquea clientes legítimos, desactívalo).
+3. Rate limiting en `/api/v1/auth/login` si el plan lo permite; si no, confía en `LOGIN_RATE_LIMIT` de la API.
+4. **Email → Email Routing**: alias `contacto@` / `dmarc@` → tu Gmail (MX **DNS only**).
+
+Referencia de reglas: [deploy/cloudflare/README.md](../deploy/cloudflare/README.md). Checklist corta: [DIA1_PRODUCCION_APP_MEINCART.md](./DIA1_PRODUCCION_APP_MEINCART.md).
+
 ---
 
 ## 3. Preparar el servidor
+
+### 3.0 Kit genérico `ubuntu/` (recomendado)
+
+Desde tu máquina local (empaqueta, transfiere y descomprime):
+
+```bash
+./ubuntu/push-to-server.sh --host usuario@203.0.113.10
+```
+
+En el servidor:
+
+```bash
+cd ~/platform-kit/ubuntu
+sudo ./bootstrap.sh
+# 1 SO → 2 seguridad → 3 UFW → 4 Docker (+ red platform-net)
+```
+
+Guía: [ubuntu/README.md](../ubuntu/README.md). Si ya usaste el kit, puedes saltar 3.2 y 3.3.
 
 ### 3.1 Conectar por SSH
 
@@ -160,7 +195,7 @@ Más ejemplos de registros: [docs/Cloudflare/dns.md § Tabla de registros](./Clo
 ssh usuario@203.0.113.10
 ```
 
-### 3.2 Instalar Docker
+### 3.2 Instalar Docker (manual, si no usaste el kit)
 
 ```bash
 # Ubuntu / Debian (script oficial)
@@ -170,7 +205,7 @@ sudo usermod -aG docker "$USER"
 docker compose version
 ```
 
-### 3.3 Firewall (UFW)
+### 3.3 Firewall (UFW) (manual, si no usaste el kit)
 
 ```bash
 sudo ufw default deny incoming
@@ -182,7 +217,7 @@ sudo ufw enable
 sudo ufw status
 ```
 
-### 3.4 Clonar el repositorio
+### 3.4 Clonar el repositorio de MyRent Go
 
 ```bash
 sudo mkdir -p /opt/myrent
@@ -195,7 +230,7 @@ git clone https://github.com/TU_USUARIO/my-rent-go.git .
 ### 3.5 Permisos del script de deploy
 
 ```bash
-chmod +x scripts/deploy-prod.sh scripts/backup.sh
+chmod +x scripts/deploy-prod.sh scripts/backup-prod.sh scripts/backup-restic.sh scripts/deploy-monitoring.sh
 ```
 
 ---
@@ -211,7 +246,7 @@ openssl rand -base64 32
 # Contraseña root de MongoDB
 openssl rand -base64 24
 
-# Otra contraseña (rotación, tokens internos, etc.)
+# Otra contraseña (rotación de credenciales, tokens de API internos, claves de cifrado)
 openssl rand -hex 32
 ```
 
@@ -237,7 +272,7 @@ chmod 600 .env
 nano .env
 ```
 
-### 5.2 Variables para subdominio `app.meincart.com`
+### 5.2 Variables para subdominio `rent.meincart.com`
 
 Sustituye `CHANGE_ME...` y las contraseñas generadas en el paso anterior.
 
@@ -248,12 +283,12 @@ APP_PORT=7070
 APP_NAME=MyRent Go
 
 # Caddy obtiene el certificado para este host
-DOMAIN=app.meincart.com
-FRONTEND_URL=https://app.meincart.com
-BASE_URL=https://app.meincart.com
+DOMAIN=rent.meincart.com
+FRONTEND_URL=https://rent.meincart.com
+BASE_URL=https://rent.meincart.com
 
 # Solo el origen del frontend (sin espacios)
-CORS_ORIGINS=https://app.meincart.com
+CORS_ORIGINS=https://rent.meincart.com
 
 # Email para Let's Encrypt (recomendado)
 ACME_EMAIL=admin@meincart.com
@@ -283,11 +318,11 @@ LOGIN_RATE_WINDOW=1m
 DOCUMENTS_PATH=/app/storage/documents
 MAX_UPLOAD_MB=30
 
-# ── SMTP (ver sección 8) ──────────────────────────────────────────────────────
-SMTP_HOST=smtp.sendgrid.net
+# ── SMTP gratuito (ver sección 8 — Brevo recomendado día 1) ───────────────────
+SMTP_HOST=smtp-relay.brevo.com
 SMTP_PORT=587
-SMTP_USER=apikey
-SMTP_PASSWORD=<api-key-de-sendgrid>
+SMTP_USER=<login-brevo>
+SMTP_PASSWORD=<smtp-key-brevo>
 SMTP_FROM=noreply@meincart.com
 SMTP_FROM_NAME=MyRent Go
 
@@ -305,7 +340,7 @@ METRICS_REFRESH_INTERVAL_SECS=60
 
 | Variable | Debe coincidir con |
 |----------|-------------------|
-| `DOMAIN` | Registro DNS en Cloudflare (`app`) |
+| `DOMAIN` | Registro DNS en Cloudflare (`rent`) |
 | `FRONTEND_URL` | `https://` + `DOMAIN` |
 | `CORS_ORIGINS` | Exactamente la URL del navegador (con `https://`) |
 | `MONGODB_URI` | `MONGO_ROOT_USER` y `MONGO_ROOT_PASSWORD` |
@@ -390,20 +425,41 @@ La config de referencia enruta `/api/` y `/ws` al backend y sirve la SPA en `/`.
 
 ### 7.4 Escenario con API en subdominio separado (opcional)
 
-Si quieres `api.meincart.com` además de `app.meincart.com`:
+Si quieres `api.meincart.com` además de `rent.meincart.com`:
 
 1. Añade registro **A** `api` → IP del VPS (proxied) en Cloudflare.
 2. Extiende el `Caddyfile` con un bloque `api.meincart.com { reverse_proxy api:7070 }`.
-3. Ajusta `CORS_ORIGINS=https://app.meincart.com` y `BASE_URL=https://api.meincart.com`.
+3. Ajusta `CORS_ORIGINS=https://rent.meincart.com` y `BASE_URL=https://api.meincart.com`.
 4. El frontend en desarrollo usa rutas relativas `/api/` — con hosts separados puede requerir variable `VITE_API_URL` en build (no es el escenario por defecto del proyecto).
 
 ---
 
-## 8. SMTP real (correo saliente)
+## 8. SMTP gratuito (correo saliente) — camino por defecto
 
-En producción **no** uses Mailpit. Configura un proveedor SMTP real.
+En producción **no** uses Mailpit. El día 1 usa un proveedor SMTP **gratuito con límites** (suficiente para recordatorios de arriendo). **Mailcow es opcional** y no forma parte del camino por defecto.
 
-### 8.1 SendGrid (recomendado para volumen medio)
+Detalle y SPF/DKIM: [docs/Cloudflare/correo.md](./Cloudflare/correo.md).
+
+### 8.1 Brevo (recomendado día 1)
+
+Cuenta free (~300 correos/día típico). Verifica el dominio en el panel y copia SPF/DKIM a Cloudflare (**DNS only**).
+
+```env
+SMTP_HOST=smtp-relay.brevo.com
+SMTP_PORT=587
+SMTP_USER=<login-o-email-brevo>
+SMTP_PASSWORD=<smtp-key>
+SMTP_FROM=noreply@meincart.com
+SMTP_FROM_NAME=MyRent Go
+```
+
+SPF (unifica un solo TXT `@`):
+
+```text
+v=spf1 include:spf.brevo.com include:_spf.mx.cloudflare.net ~all
+```
+
+### 8.2 SendGrid (alternativa free)
 
 ```env
 SMTP_HOST=smtp.sendgrid.net
@@ -414,22 +470,25 @@ SMTP_FROM=noreply@meincart.com
 SMTP_FROM_NAME=MyRent Go
 ```
 
-Añade los registros SPF/DKIM que indique SendGrid en Cloudflare (**DNS only**).
+SPF: `include:sendgrid.net` junto al de Email Routing si aplica.
 
-### 8.2 Gmail (pruebas o bajo volumen)
+### 8.3 Gmail (más simple; FROM = tu Gmail)
 
-1. Activa verificación en 2 pasos en Google.
+1. Activa verificación en 2 pasos.
 2. Crea una [contraseña de aplicación](https://myaccount.google.com/apppasswords).
+
+Sin Google Workspace **no** uses `noreply@meincart.com` como FROM (Gmail lo reescribirá o rechazará).
 
 ```env
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=tu-correo@gmail.com
 SMTP_PASSWORD=xxxx-xxxx-xxxx-xxxx
-SMTP_FROM=notificaciones@meincart.com
+SMTP_FROM=tu-correo@gmail.com
+SMTP_FROM_NAME=MyRent Go
 ```
 
-### 8.3 Microsoft 365
+### 8.4 Microsoft 365 (si ya tienes buzón en el dominio)
 
 ```env
 SMTP_HOST=smtp.office365.com
@@ -439,26 +498,19 @@ SMTP_PASSWORD=<contraseña-o-app-password>
 SMTP_FROM=notificaciones@meincart.com
 ```
 
-### 8.4 Mailcow self-hosted
+### 8.5 Mailcow (opcional, futuro)
 
-Si tienes servidor de correo propio: [docs/Cloudflare/mailcow.md](./Cloudflare/mailcow.md).
+Solo si más adelante quieres correo self-hosted: [docs/Cloudflare/mailcow.md](./Cloudflare/mailcow.md). Requiere otro host o pelear puertos 80/443. **No** lo uses el día 1.
 
-```env
-SMTP_HOST=mail.meincart.com
-SMTP_PORT=587
-SMTP_USER=noreply@meincart.com
-SMTP_PASSWORD=<contraseña-del-buzón>
-SMTP_FROM=noreply@meincart.com
-```
-
-### 8.5 Verificar SMTP en la app
+### 8.6 Verificar SMTP en la app
 
 1. Reinicia la API: `docker compose -f docker-compose.prod.yml restart api`
-2. Inicia sesión como admin → **Configuración → Notificaciones por correo**
-3. Comprueba que el indicador muestre *SMTP configurado*
-4. Envía un correo de prueba a un destinatario
+2. Inicia sesión como admin → **Notificaciones**
+3. Comprueba *SMTP configurado* (`GET /api/v1/email-recipients/smtp-status`)
+4. Destinatarios → **Probar formatos** (o correo de prueba)
+5. Revisa bandeja y carpeta spam
 
-Correo entrante (reenvío) es independiente: [docs/Cloudflare/correo.md](./Cloudflare/correo.md).
+Correo **entrante** (reenvío) es independiente: Cloudflare Email Routing → [correo.md](./Cloudflare/correo.md).
 
 ---
 
@@ -500,7 +552,7 @@ Si el admin ya existe, el seed se omite. Para recrear (¡destructivo!):
 
 ### 9.2 Cambiar contraseña del admin
 
-1. Accede a `https://app.meincart.com`
+1. Accede a `https://rent.meincart.com`
 2. Login: `admin` / `admin123`
 3. **Configuración → Seguridad → Cambiar contraseña**
 4. Activa **MFA** (recomendado para administradores)
@@ -513,16 +565,16 @@ Si el admin ya existe, el seed se omite. Para recrear (¡destructivo!):
 
 ```bash
 # Desde el servidor
-curl -s https://app.meincart.com/health
+curl -s https://rent.meincart.com/health
 # {"status":"ok","service":"MyRent Go"}
 
 # Desde tu máquina
-curl -sI https://app.meincart.com | head -5
+curl -sI https://rent.meincart.com | head -5
 ```
 
 ### 10.2 HTTPS y certificado
 
-- Abre `https://app.meincart.com` en el navegador: candado verde, sin advertencias.
+- Abre `https://rent.meincart.com` en el navegador: candado verde, sin advertencias.
 - Cloudflare en **Full (strict)**.
 
 ### 10.3 Login y MFA
@@ -535,7 +587,7 @@ curl -sI https://app.meincart.com | head -5
 
 Si el frontend carga pero las peticiones API fallan con error CORS:
 
-- Verifica `CORS_ORIGINS=https://app.meincart.com` (sin barra final, con `https://`).
+- Verifica `CORS_ORIGINS=https://rent.meincart.com` (sin barra final, con `https://`).
 - Reinicia la API tras cambiar `.env`.
 
 ### 10.5 Subida de documentos
@@ -564,56 +616,42 @@ docker compose -f docker-compose.prod.yml exec api ls -la /app/storage/documents
 
 ## 11. Backups
 
-### 11.1 MongoDB (cron diario)
+### 11.1 Script de producción (recomendado)
 
-Script incluido: [`scripts/backup.sh`](../scripts/backup.sh). En producción usa `mongodump` dentro del contenedor:
+Usa [`scripts/backup-prod.sh`](../scripts/backup-prod.sh): dump Mongo vía contenedor + documentos del API, empaqueta `.tar.gz` y rota por días.
 
 ```bash
-#!/usr/bin/env bash
-# /opt/myrent/scripts/backup-prod.sh
-set -euo pipefail
 cd /opt/myrent
-set -a && source .env && set +a
-
-BACKUP_DIR="/opt/myrent/backups"
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-mkdir -p "$BACKUP_DIR"
-
-docker compose -f docker-compose.prod.yml exec -T mongodb \
-  mongodump \
-    -u "$MONGO_ROOT_USER" \
-    -p "$MONGO_ROOT_PASSWORD" \
-    --authenticationDatabase admin \
-    --db "$MONGODB_DATABASE" \
-    --archive \
-  > "$BACKUP_DIR/mongo_${TIMESTAMP}.archive"
-
-# Retener últimos 14 días
-find "$BACKUP_DIR" -name 'mongo_*.archive' -mtime +14 -delete
-echo "Backup: $BACKUP_DIR/mongo_${TIMESTAMP}.archive"
+chmod +x scripts/backup-prod.sh
+./scripts/backup-prod.sh
+# Archivo en ./backups/myrent_prod_YYYYMMDD_HHMMSS.tar.gz — cópialo fuera del VPS
 ```
 
-Cron (ejecutar a las 03:00):
+Cron diario 03:15:
 
 ```bash
-chmod +x /opt/myrent/scripts/backup-prod.sh
 crontab -e
-# Añadir:
-0 3 * * * /opt/myrent/scripts/backup-prod.sh >> /var/log/myrent-backup.log 2>&1
+# 15 3 * * * cd /opt/myrent && ./scripts/backup-prod.sh >> /var/log/myrent-backup.log 2>&1
 ```
+
+Variables opcionales: `BACKUP_DIR`, `KEEP_DAYS` (default 14), `COMPOSE_FILE`.
 
 ### 11.2 Restaurar MongoDB
 
+Desde un archive generado por `mongodump --archive` (contenido dentro del `.tar.gz` → `mongo.archive`):
+
 ```bash
+# Extraer primero el work_* / mongo.archive del tar.gz
 docker compose -f docker-compose.prod.yml exec -T mongodb \
   mongorestore \
     -u "$MONGO_ROOT_USER" \
     -p "$MONGO_ROOT_PASSWORD" \
     --authenticationDatabase admin \
     --archive \
-    --drop \
-  < backups/mongo_YYYYMMDD_HHMMSS.archive
+    --drop < mongo.archive
 ```
+
+Ver también el script genérico de desarrollo [`scripts/backup.sh`](../scripts/backup.sh) (espera `mongodump` en el host).
 
 ### 11.3 Volumen de documentos
 
@@ -625,7 +663,7 @@ docker run --rm \
   alpine tar czf "/backup/documents_$(date +%Y%m%d).tar.gz" -C /data .
 ```
 
-Programa este backup semanalmente y copia los archivos a almacenamiento externo (S3, otro servidor, etc.).
+Programa este backup semanalmente y copia los archivos a almacenamiento externo (Amazon S3, Backblaze B2, Google Cloud Storage, un NAS remoto o un disco externo).
 
 ---
 
@@ -637,11 +675,11 @@ Con `METRICS_PROTECTED=true` (recomendado), `/metrics` requiere JWT de usuario *
 
 ```bash
 # Obtener token
-TOKEN=$(curl -s -X POST https://app.meincart.com/api/v1/auth/login \
+TOKEN=$(curl -s -X POST https://rent.meincart.com/api/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"TU_PASSWORD"}' | jq -r '.access_token')
 
-curl -s -H "Authorization: Bearer $TOKEN" https://app.meincart.com/metrics | head
+curl -s -H "Authorization: Bearer $TOKEN" https://rent.meincart.com/metrics | head
 ```
 
 El panel **Configuración → Sistema** muestra estado de métricas y logs internos.
@@ -656,13 +694,13 @@ docker compose -f docker-compose.prod.yml logs -f --tail=50 caddy
 ### 12.3 Prometheus (opcional)
 
 1. Descomenta el servicio `prometheus` en `docker-compose.yml` (desarrollo) como referencia.
-2. En producción, añade un scraper que apunte a `https://app.meincart.com/metrics` con autenticación Bearer, o scrapea `api:7070/metrics` desde la red Docker interna.
+2. En producción, añade un scraper que apunte a `https://rent.meincart.com/metrics` con autenticación Bearer, o scrapea `api:7070/metrics` desde la red Docker interna.
 
 ### 12.4 Uptime externo
 
-Servicios gratuitos (UptimeRobot, Better Stack, etc.) pueden vigilar:
+Servicios gratuitos (UptimeRobot, Better Stack, Hetrixtools, Pingdom) pueden vigilar:
 
-- `https://app.meincart.com/health` cada 5 minutos
+- `https://rent.meincart.com/health` cada 5 minutos
 
 ---
 
@@ -683,7 +721,7 @@ git pull origin main
 ./scripts/deploy-prod.sh
 
 # 4. Verificar
-curl -s https://app.meincart.com/health
+curl -s https://rent.meincart.com/health
 ```
 
 ### 13.2 Migraciones de base de datos
@@ -713,7 +751,7 @@ git checkout <tag-o-commit-anterior>
 | Síntoma | `Access-Control-Allow-Origin` ausente o incorrecto |
 |---------|---------------------------------------------------|
 | Causa habitual | `CORS_ORIGINS` no coincide con la URL del navegador |
-| Solución | `CORS_ORIGINS=https://app.meincart.com`, reiniciar `api` |
+| Solución | `CORS_ORIGINS=https://rent.meincart.com`, reiniciar `api` |
 
 ### 502 Bad Gateway
 
@@ -730,7 +768,7 @@ git checkout <tag-o-commit-anterior>
 |-------|----------|
 | Modo **Flexible** | Cambiar a **Full (strict)** en Cloudflare |
 | Caddy sin certificado | Ver logs Caddy; puertos 80/443 abiertos; `DOMAIN` correcto |
-| DNS no apunta al VPS | Verificar registro `app` en Cloudflare |
+| DNS no apunta al VPS | Verificar registro `rent` en Cloudflare |
 
 ### WebSocket desconecta
 
@@ -769,6 +807,9 @@ Causas frecuentes: contraseña MongoDB incorrecta en `MONGODB_URI`, falta `JWT_S
 | Recurso | Enlace |
 |---------|--------|
 | Índice producción | [PRODUCTION.md](./PRODUCTION.md) |
+| Día 1 checklist | [DIA1_PRODUCCION_APP_MEINCART.md](./DIA1_PRODUCCION_APP_MEINCART.md) |
+| Kit Ubuntu genérico | [ubuntu/README.md](../ubuntu/README.md) |
+| Observabilidad MyRent | [OBSERVABILIDAD_RESTIC.md](./OBSERVABILIDAD_RESTIC.md) |
 | Cloudflare meincart.com | [Cloudflare/README.md](./Cloudflare/README.md) |
 | DNS y SSL | [Cloudflare/dns.md](./Cloudflare/dns.md) |
 | Correo | [Cloudflare/correo.md](./Cloudflare/correo.md) |
@@ -779,4 +820,4 @@ Causas frecuentes: contraseña MongoDB incorrecta en `MONGODB_URI`, falta `JWT_S
 
 ---
 
-*Última actualización: documento alineado con `docker-compose.prod.yml`, Caddy y dominio meincart.com en Cloudflare.*
+*Última actualización: alineado con `docker-compose.prod.yml`, Caddy, kit `ubuntu/` (paso 0) y dominio meincart.com en Cloudflare.*

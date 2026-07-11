@@ -1,0 +1,20 @@
+# Prometheus
+
+## Qué es
+Sistema de monitoring que scrapea endpoints `/metrics` (Prometheus exposition format).
+
+## Para qué sirve
+Alertas, series temporales, rate de errores HTTP, salud de servicios, etc.
+
+## Cuándo instalarlo
+En cuanto alguna app o exporter exponga métricas Prometheus.
+
+## Parámetros clave
+| Parámetro | Significado |
+|-----------|-------------|
+| `PROMETHEUS_RETENTION` | Días de historia en disco |
+| `SCRAPE_TARGET` | Ajusta también `prometheus.yml` |
+| `METRICS_SCRAPE_TOKEN` | Si `/metrics` pide Bearer |
+
+## Seguridad
+UI solo `127.0.0.1:9090`. Métricas nunca públicas a Internet sin auth.

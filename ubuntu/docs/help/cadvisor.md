@@ -1,0 +1,10 @@
+# cAdvisor
+
+## Qué es
+Exporter de uso de recursos **por contenedor Docker**.
+
+## Para qué sirve
+Detectar qué contenedor consume CPU/RAM. UI en `127.0.0.1:8088`.
+
+## Nota
+Corre con privilegios elevados (lee cgroups). Solo en red interna / localhost.

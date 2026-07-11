@@ -36,7 +36,7 @@ Sustituye `203.0.113.10` por la IP real de tu VPS. Los valores MX de Email Routi
 | Tipo | Nombre | Contenido | TTL | Proxy |
 |------|--------|-----------|-----|-------|
 | A | `@` | `203.0.113.10` | Auto | Proxied |
-| A | `app` | `203.0.113.10` | Auto | Proxied |
+| A | `rent` | `203.0.113.10` | Auto | Proxied |
 | A | `api` | `203.0.113.10` | Auto | Proxied |
 | CNAME | `www` | `meincart.com` | Auto | Proxied |
 | MX | `@` | `route1.mx.cloudflare.net` (prioridad 62) | Auto | DNS only |
@@ -46,13 +46,15 @@ Sustituye `203.0.113.10` por la IP real de tu VPS. Los valores MX de Email Routi
 | TXT | `_dmarc` | `v=DMARC1; p=none; rua=mailto:dmarc@meincart.com` | Auto | DNS only |
 | TXT | `cf2024._domainkey` | *(valor DKIM de Email Routing)* | Auto | DNS only |
 
-Si usas **solo** SMTP externo (SendGrid) sin Email Routing, los MX y TXT de Cloudflare Email Routing no aplican; en su lugar añade los registros que indique tu proveedor SMTP (ver [correo.md](./correo.md)).
+Si usas **solo** SMTP externo (Brevo/SendGrid) sin Email Routing, los MX y TXT de Cloudflare Email Routing no aplican; en su lugar añade los registros que indique tu proveedor SMTP (ver [correo.md](./correo.md)).
+
+Para el go-live de **`rent.meincart.com`**: A `rent` Proxied + SSL **Full (strict)** + bypass cache `/api/*` `/ws`. Checklist: [DIA1_PRODUCCION_APP_MEINCART.md](../DIA1_PRODUCCION_APP_MEINCART.md).
 
 ## Subdominios para MyRent Go
 
 | Host | Destino | Uso |
 |------|---------|-----|
-| `app.meincart.com` | Misma IP del VPS (A proxied) | Frontend PWA |
+| `rent.meincart.com` | Misma IP del VPS (A proxied) | Frontend PWA |
 | `api.meincart.com` | Misma IP del VPS (A proxied) | API REST y WebSocket |
 
 Alternativa con un solo host: `meincart.com` sirve frontend y el reverse proxy enruta `/api` y `/ws` al backend (configuración Caddy/Nginx en el servidor).
@@ -85,10 +87,10 @@ MyRent Go usa WebSocket en `/ws`. Con proxy naranja:
 
 ```bash
 # Resolución DNS (debe mostrar IPs de Cloudflare si está proxied)
-dig app.meincart.com +short
+dig rent.meincart.com +short
 
 # Certificado visto por el navegador
-curl -sI https://app.meincart.com | head -5
+curl -sI https://rent.meincart.com | head -5
 ```
 
 ## Volver al índice

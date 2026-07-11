@@ -1,0 +1,107 @@
+================================================================================
+  Ayuda — comandos de red (IP Wi‑Fi / puerto SSH)
+================================================================================
+
+Menú: bootstrap → 10) Comandos útiles → 1) Red
+  (opciones para ejecutar: rfkill, Wi‑Fi, ethernet, ping, puerto SSH)
+
+También:
+  bash scripts/utils/network-menu.sh
+  bash scripts/utils/network-info.sh
+
+--------------------------------------------------------------------------------
+Si ves wlp2s0 DOWN / enp1s0 DOWN
+--------------------------------------------------------------------------------
+
+Orden recomendado en el menú de red:
+
+  3) rfkill unblock wifi
+  4) Activar radio Wi‑Fi
+  5) Listar redes
+  6) Conectar a Wi‑Fi (SSID + password)
+  1) Ver IP y puerto SSH
+
+O por cable:
+
+  8) Levantar Ethernet + DHCP
+
+El bridge br-… de Docker puede estar DOWN; no afecta al Wi‑Fi/SSH del host.
+
+--------------------------------------------------------------------------------
+IP pública vs hostname -I
+--------------------------------------------------------------------------------
+
+  hostname -I NO muestra la IP pública. Ejemplo típico:
+
+    192.168.1.198   LAN / Wi‑Fi  ← usa esta para SSH en casa
+    172.17/18/19.x  bridges Docker
+    10.x.x.x        otra red privada
+
+  IP pública (router hacia Internet):
+
+    curl -4 -s ifconfig.me; echo
+    curl -4 -s https://api.ipify.org; echo
+
+  En el menú: 10 → 1 → opción 11 (IP pública)
+
+--------------------------------------------------------------------------------
+IP de Wi‑Fi / LAN
+--------------------------------------------------------------------------------
+
+  hostname -I
+  ip -br addr
+  ip -4 -br addr show wlp2s0
+  ip route get 1.1.1.1 | awk '{print $7; exit}'
+  nmcli device status
+  nmcli device wifi list
+  sudo nmcli device wifi connect "SSID" password "PASS" ifname wlp2s0
+  nmcli connection show
+  sudo nmcli connection up "nombre"
+
+--------------------------------------------------------------------------------
+Ethernet
+--------------------------------------------------------------------------------
+
+  sudo ip link set enp1s0 up
+  sudo nmcli device connect enp1s0
+  sudo dhclient enp1s0
+
+--------------------------------------------------------------------------------
+rfkill (Wi‑Fi bloqueado)
+--------------------------------------------------------------------------------
+
+  rfkill list
+  sudo rfkill unblock wifi
+
+--------------------------------------------------------------------------------
+Puerto SSH
+--------------------------------------------------------------------------------
+
+  grep -E '^Port|^#Port' /etc/ssh/sshd_config
+  ss -tlnp | grep ssh
+  sudo ss -tlnp | grep sshd
+
+Si no hay línea Port en sshd_config, el puerto es 22.
+
+--------------------------------------------------------------------------------
+Conectar desde otro PC
+--------------------------------------------------------------------------------
+
+  ssh -p <puerto> <usuario>@<ip>
+
+--------------------------------------------------------------------------------
+Acceso público (DNS / router / Caddy)
+--------------------------------------------------------------------------------
+
+  Si quieres publicar un dominio (ej. rent.tudominio.com) desde casa:
+
+    bash scripts/edge/check-public-access.sh
+    less docs/help/public-access.txt
+
+  Menú: bootstrap → 7 → 1   o   10 → 1 → 12
+
+  Prueba desde el Mac:
+    curl -sI --connect-timeout 5 http://TU_IP_PUBLICA/ | head -8
+
+  Si ves Server: micro_httpd → el router responde, no este host
+  (arregla port-forward 80/443 → IP LAN, o usa Cloudflare Tunnel).

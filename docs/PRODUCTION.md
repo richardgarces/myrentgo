@@ -18,24 +18,25 @@ Volumen api_storage → documentos en filesystem
 ### Servidor
 
 - [ ] VPS con Docker y Docker Compose v2
-- [ ] Puertos **80** y **443** abiertos en firewall
-- [ ] Dominio **meincart.com** activo en Cloudflare (estado *Active*)
-- [ ] Registro **A** `@` → IP del VPS (**Proxied** / nube naranja)
-- [ ] SSL/TLS en Cloudflare: **Full (strict)** ([docs/Cloudflare/dns.md](./Cloudflare/dns.md))
-- [ ] **Always Use HTTPS** activado en Cloudflare
+- [ ] (Recomendado) Kit [`ubuntu/`](../ubuntu/README.md): `./ubuntu/push-to-server.sh` + `sudo ./bootstrap.sh` (SO, SSH, UFW, Docker)
+- [ ] Puertos **80** y **443** abiertos; **27017 / 7070 / 25 cerrados**
+- [ ] SSH solo con clave; `PasswordAuthentication no`
+- [ ] Dominio **meincart.com** activo en Cloudflare (*Active*)
+- [ ] Registro **A** `rent` → IP del VPS (**Proxied**)
+- [ ] SSL/TLS: **Full (strict)** + Always Use HTTPS ([Cloudflare/dns.md](./Cloudflare/dns.md))
+- [ ] WAF / Bot Fight Mode según [DIA1_PRODUCCION_APP_MEINCART.md](./DIA1_PRODUCCION_APP_MEINCART.md)
 
 ### Secretos y configuración
 
-- [ ] Copiar plantilla: `cp .env.production.example .env`
-- [ ] Generar `JWT_SECRET`: `openssl rand -base64 32`
-- [ ] Generar `MONGO_ROOT_PASSWORD`: `openssl rand -base64 24`
-- [ ] Reemplazar **todos** los `CHANGE_ME` en `.env`
+- [ ] `cp .env.production.example .env` y `chmod 600 .env`
+- [ ] Generar `JWT_SECRET` y `MONGO_ROOT_PASSWORD` con openssl
+- [ ] Reemplazar **todos** los `CHANGE_ME`
 - [ ] `APP_ENV=production`
-- [ ] `FRONTEND_URL=https://meincart.com`
-- [ ] `CORS_ORIGINS` solo con dominios de producción
+- [ ] `DOMAIN` / `FRONTEND_URL` / `CORS_ORIGINS` = `https://rent.meincart.com`
 - [ ] `METRICS_PROTECTED=true`
-- [ ] `LOGIN_RATE_LIMIT=5` (o más estricto si lo necesitas)
-- [ ] SMTP real configurado (no Mailpit)
+- [ ] `METRICS_SCRAPE_TOKEN` para Prometheus (opcional si no usas monitoring)
+- [ ] `LOGIN_RATE_LIMIT=5` (o más estricto)
+- [ ] SMTP gratuito configurado (Brevo/SendGrid/Gmail) — **no** Mailpit
 - [ ] **No** commitear `.env` al repositorio
 
 ### Seguridad
@@ -119,7 +120,9 @@ El script valida variables obligatorias, ejecuta `go build` y `npm run build`, c
 
 ## Usuario administrador inicial (seed)
 
-El seed crea `admin` / `admin123` **solo si no existe** un admin previo.
+El seed crea `admin` / `admin123` **solo en desarrollo** y **solo si no existe** un admin previo.
+En producción el seed está bloqueado salvo `SEED_ALLOW_PROD=1` + `SEED_ADMIN_PASSWORD` fuerte.
+El formulario de login **no** rellena credenciales.
 
 **Ejecutar una sola vez** tras el primer despliegue, con MongoDB accesible:
 
@@ -148,51 +151,68 @@ Tras el primer login:
 
 ## SMTP (producción)
 
-Mailpit es **solo desarrollo**. En producción configura un proveedor real en `.env`:
+Mailpit es **solo desarrollo**. En producción el **camino por defecto** es SMTP gratuito:
 
 | Proveedor | SMTP_HOST | Notas |
 |-----------|-----------|-------|
-| Mailcow (self-hosted) | `mail.meincart.com` | [docs/Cloudflare/mailcow.md](./Cloudflare/mailcow.md) |
+| **Brevo** (recomendado día 1) | `smtp-relay.brevo.com` | Free ~300/día; verifica dominio + SPF/DKIM |
 | SendGrid | `smtp.sendgrid.net` | Usuario `apikey`, password = API key |
-| Gmail | `smtp.gmail.com` | Contraseña de aplicación (2FA) |
+| Gmail | `smtp.gmail.com` | App password; `SMTP_FROM` = tu Gmail |
+| Mailcow (opcional) | `mail.meincart.com` | [mailcow.md](./Cloudflare/mailcow.md) — no día 1 |
 
 Variables requeridas: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`.
 
-Prueba enviando verificación de correo o reset de contraseña desde la app.
+Checklist operativa: [DIA1_PRODUCCION_APP_MEINCART.md](./DIA1_PRODUCCION_APP_MEINCART.md). Guía larga: [DESPLIEGUE_PRODUCCION_SUBDOMINIO.md](./DESPLIEGUE_PRODUCCION_SUBDOMINIO.md).
+
+Prueba con **Probar formatos** desde Destinatarios o reset de contraseña.
 
 ---
 
 ## MongoDB — backup y restore
 
-### Backup manual
+### Backup en producción (recomendado)
 
 ```bash
-# Con .env cargado (MONGODB_URI con credenciales)
+cd /opt/myrent
+./scripts/backup-prod.sh
+# → ./backups/myrent_prod_*.tar.gz — copiar fuera del VPS
+```
+
+Cron:
+
+```bash
+15 3 * * * cd /opt/myrent && ./scripts/backup-prod.sh >> /var/log/myrent-backup.log 2>&1
+```
+
+### Backup off-site (Restic)
+
+```bash
+cp deploy/platform/restic.env.example deploy/platform/restic.env
+chmod 600 deploy/platform/restic.env
+RESTIC_INIT=1 ./scripts/backup-restic.sh   # una vez
+./scripts/backup-restic.sh
+```
+
+Cron (local + S3/B2/MinIO):
+
+```bash
+30 3 * * * cd /opt/myrent && ./scripts/backup-restic.sh >> /var/log/myrent-restic.log 2>&1
+```
+
+Detalle: [OBSERVABILIDAD_RESTIC.md](./OBSERVABILIDAD_RESTIC.md)
+
+### Backup manual (host con mongodump)
+
+```bash
 source .env
 ./scripts/backup.sh
 ```
 
-Los archivos se guardan en `./backups/` (ignorado por git).
-
-### Backup automático (cron)
-
-```bash
-# Ejemplo: backup diario a las 03:00
-0 3 * * * cd /ruta/my-rent-go && set -a && source .env && set +a && ./scripts/backup.sh >> /var/log/myrent-backup.log 2>&1
-```
-
-### Restore
-
-```bash
-tar -xzf backups/myrent_YYYYMMDD_HHMMSS.tar.gz -C /tmp
-mongorestore --uri="$MONGODB_URI" --db=myrent /tmp/dump_YYYYMMDD_HHMMSS/myrent
-```
-
 ### Buenas prácticas
 
-- Retener al menos 7 días de backups off-site (S3, otro servidor)
-- Probar restore en entorno de staging antes de depender del backup
-- Antes de actualizaciones mayores, backup manual
+- Retener ≥ 7 días **off-site** (otro disco / cloud)
+- Probar restore una vez antes de depender del backup
+- Backup manual antes de actualizaciones mayores
 
 ---
 
@@ -201,15 +221,25 @@ mongorestore --uri="$MONGODB_URI" --db=myrent /tmp/dump_YYYYMMDD_HHMMSS/myrent
 | Variable | Producción | Descripción |
 |----------|------------|-------------|
 | `METRICS_ENABLED` | `true` | Expone `GET /metrics` (Prometheus) |
-| `METRICS_PROTECTED` | `true` | Requiere JWT admin/owner para `/metrics` |
+| `METRICS_PROTECTED` | `true` | Requiere JWT admin/owner o `METRICS_SCRAPE_TOKEN` |
+| `METRICS_SCRAPE_TOKEN` | Generar con openssl | Token Bearer para Prometheus (`deploy-monitoring.sh`) |
 | `LOGIN_RATE_LIMIT` | `5` | Intentos de login por IP por ventana |
 | `LOGIN_RATE_WINDOW` | `1m` | Ventana del rate limit de login |
+
+Stack Prometheus + Grafana:
+
+```bash
+./scripts/deploy-monitoring.sh
+- Prometheus http://127.0.0.1:9090  Alertmanager http://127.0.0.1:9093  Grafana http://127.0.0.1:3001
+```
+
+Guía: [OBSERVABILIDAD_RESTIC.md](./OBSERVABILIDAD_RESTIC.md)
 
 El panel **Configuración → Sistema** muestra advertencias si MongoDB no tiene auth o si `/metrics` es público.
 
 Health checks:
 
-- `GET https://meincart.com/health` → API
+- `GET https://rent.meincart.com/health` → API
 - Docker healthchecks en `api`, `frontend`, `mongodb`
 
 ---
@@ -231,7 +261,7 @@ Health checks:
 | Env | `.env` (desde `.env.example`) | `.env` (desde `.env.production.example`) |
 | `APP_ENV` | `development` | `production` |
 | MongoDB | Puerto `127.0.0.1:27017`, sin auth | Sin puerto publicado, con auth |
-| SMTP | Mailpit (`localhost:1025`) | Proveedor real (Mailcow, SendGrid, etc.) |
+| SMTP | Mailpit (`localhost:1025`) | Proveedor real (Brevo, SendGrid, Gmail, Mailcow) |
 | CORS | `localhost:4000`, `5173` | `https://meincart.com` |
 | `FRONTEND_URL` | `http://localhost:4000` | `https://meincart.com` |
 | Edge / TLS | Sin proxy o puertos directos | Caddy :80/:443 + Let's Encrypt |
@@ -270,8 +300,8 @@ Health checks:
 | `MONGO_ROOT_PASSWORD` | Sí | `openssl rand -base64 24` |
 | `MONGODB_URI` | Sí | Debe coincidir con user/pass y `authSource=admin` |
 | `CORS_ORIGINS` | Sí | Dominios HTTPS de producción |
-| `FRONTEND_URL` | Sí | `https://meincart.com` |
-| `DOMAIN` | Sí | Para Caddy (`meincart.com`) |
+| `FRONTEND_URL` | Sí | `https://rent.meincart.com` |
+| `DOMAIN` | Sí | Para Caddy (`rent.meincart.com`) |
 | `SMTP_*` | Sí | Host, user, password, from |
 | `METRICS_PROTECTED` | Recomendado `true` | Protege `/metrics` |
 | `LOGIN_RATE_LIMIT` | Recomendado `5` | Anti fuerza bruta |
@@ -283,7 +313,12 @@ Health checks:
 
 ## Referencias
 
+- [DIA1_PRODUCCION_APP_MEINCART.md](./DIA1_PRODUCCION_APP_MEINCART.md) — checklist operativa día 1
+- [INDICE_PRODUCCION.md](./INDICE_PRODUCCION.md) — mapa de guías (host genérico + MyRent Go)
+- [DESPLIEGUE_PRODUCCION_SUBDOMINIO.md](./DESPLIEGUE_PRODUCCION_SUBDOMINIO.md) — guía paso a paso
 - [CHECKLIST_PRODUCCION.md](./CHECKLIST_PRODUCCION.md) — checklist de seguridad ampliado
-- [docs/Cloudflare/](./Cloudflare/) — DNS, correo, Mailcow
+- [OBSERVABILIDAD_RESTIC.md](./OBSERVABILIDAD_RESTIC.md) — Prometheus, Grafana, Alertmanager, Restic (MyRent Go)
+- [ubuntu/README.md](../ubuntu/README.md) — kit genérico de host (ZIP/SSH, SO, Docker, Redis/MinIO/Vault/…)
+- [docs/Cloudflare/](./Cloudflare/) — DNS, correo (SMTP free), Mailcow opcional
 - [docs/SECURITY_TESTING.md](./SECURITY_TESTING.md) — pentest local
 - [docs/MFA.md](./MFA.md) — autenticación de dos factores

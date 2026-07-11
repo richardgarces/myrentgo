@@ -1,0 +1,15 @@
+# Provisioning de Grafana (datasource), NO es la config de Prometheus server.
+# El IDE no debe aplicar el schema prometheus.json a este archivo.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: Prometheus
+    access: proxy
+    url: http://platform-prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 30s
+      httpMethod: POST

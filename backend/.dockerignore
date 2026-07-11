@@ -1,5 +1,6 @@
 bin/
-storage/
+# Solo el directorio de datos en la raíz del contexto (NO internal/infrastructure/storage)
+/storage/
 *.md
 .env
 .env.*

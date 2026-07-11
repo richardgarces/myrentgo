@@ -1,0 +1,22 @@
+# Config mínima — se sobrescribe al levantar vía manage si regeneras.
+# Mejor: usa scripts de render o edita alertmanager.generated.yml tras copiar .env
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: blackhole
+  group_by: ['alertname', 'app', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: blackhole
+
+inhibit_rules:
+  - source_match:
+      severity: critical
+    target_match:
+      severity: warning
+    equal: ['alertname', 'app']

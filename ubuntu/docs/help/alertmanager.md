@@ -1,0 +1,17 @@
+# Alertmanager
+
+## Qué es
+Componente de Prometheus que agrupa, silencia y envía alertas (email, Telegram, webhook).
+
+## Para qué sirve
+Enterarte si cae la API, Mongo, o hay tasa alta de 5xx / logins fallidos.
+
+## Parámetros clave
+| Parámetro | Significado |
+|-----------|-------------|
+| `ALERTMANAGER_SMTP_*` | Salida correo (Brevo, SendGrid, Gmail) |
+| `ALERTMANAGER_EMAIL_TO` | Destinatario |
+| `ALERTMANAGER_TELEGRAM_*` | Bot + chat_id |
+| `REPEAT_INTERVAL_*` | Frecuencia de reenvío |
+
+Tras editar `.env`: `./render-config.sh` y reiniciar el contenedor.

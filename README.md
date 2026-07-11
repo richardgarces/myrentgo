@@ -32,8 +32,8 @@ chmod +x myrent.sh
 ./myrent.sh quickstart   # inicio rápido (modo nativo)
 ```
 
-Credenciales por defecto: **admin** / **admin123**  
-Cuenta pentest (sin MFA): **gestor@test.local** / **pentest123** — `./myrent.sh bootstrap`
+Credenciales de **desarrollo** (tras `./myrent.sh bootstrap`; el login ya no las rellena):
+`admin` / `admin123` — solo local. En producción no uses el seed con passwords por defecto.
 
 | Modo | App | API | Tras cambios en código |
 |------|-----|-----|------------------------|
@@ -108,12 +108,19 @@ my-rent-go/
 
 - [Manual técnico](docs/MANUAL_TECNICO.md)
 - [Manual de usuario](docs/MANUAL_USUARIO.md)
-- [Wireframes](docs/WIREFRAMES.md)
+- [Día 1 producción `rent.meincart.com`](docs/DIA1_PRODUCCION_APP_MEINCART.md)
+- [Índice producción y host](docs/INDICE_PRODUCCION.md)
+- [Despliegue con subdominio](docs/DESPLIEGUE_PRODUCCION_SUBDOMINIO.md)
+- [Producción](docs/PRODUCTION.md)
+- [Cloudflare (DNS, correo SMTP free)](docs/Cloudflare/README.md)
 - [Checklist de producción](docs/CHECKLIST_PRODUCCION.md)
+- [Observabilidad y Restic (MyRent Go)](docs/OBSERVABILIDAD_RESTIC.md)
+- [Kit Ubuntu / plataforma genérica](ubuntu/README.md) — paso 0 ZIP→SSH, SO, Docker, Redis/MinIO/Vault/…
+- [Catálogo software de apoyo](ubuntu/docs/CATALOGO.md)
+- [Wireframes](docs/WIREFRAMES.md)
 - [OpenAPI](docs/openapi.yaml)
 - [Colección Postman](docs/postman/MyRent-Go.postman_collection.json)
 
 ## Licencia
 
 Privado — uso personal.
-# myrentgo

@@ -1,0 +1,48 @@
+# Caddy de borde del kit ubuntu (platform-caddy) → MyRent Go
+# Instalar en el host:
+#   cp deploy/caddy/Caddyfile.platform-edge ~/platform-kit/ubuntu/platform/caddy/Caddyfile
+#   # En platform/caddy/.env: SITE_ADDRESS=rent.meincart.com  ACME_EMAIL=tu@email
+#   # UPSTREAM ya no se usa (rutas fijas abajo).
+#   cd ~/platform-kit/ubuntu/platform/caddy && docker compose -p platform-caddy up -d
+#
+# Requiere contenedores myrent-api y myrent-frontend en la red platform-net
+# (docker-compose.prod.platform.yml).
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$SITE_ADDRESS} {
+	encode gzip zstd
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	handle /health {
+		reverse_proxy myrent-api:7070
+	}
+
+	handle /api/* {
+		reverse_proxy myrent-api:7070 {
+			flush_interval -1
+		}
+	}
+
+	handle /ws {
+		reverse_proxy myrent-api:7070
+	}
+
+	handle /metrics {
+		reverse_proxy myrent-api:7070
+	}
+
+	handle {
+		reverse_proxy myrent-frontend:8080
+	}
+}

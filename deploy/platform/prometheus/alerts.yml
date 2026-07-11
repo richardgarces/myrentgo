@@ -1,0 +1,45 @@
+groups:
+  - name: myrentgo
+    rules:
+      - alert: MyRentGoAPIDown
+        expr: up{job="myrentgo-api"} == 0
+        for: 2m
+        labels:
+          app: myrentgo
+          severity: critical
+        annotations:
+          summary: "MyRent Go API no responde a scrape de métricas"
+          description: "El target api:7070 lleva más de 2 minutos sin métricas."
+
+      - alert: MyRentGoMongoDBDown
+        expr: myrent_mongodb_up == 0
+        for: 2m
+        labels:
+          app: myrentgo
+          severity: critical
+        annotations:
+          summary: "MongoDB no responde (métrica myrent_mongodb_up)"
+          description: "La API reporta MongoDB caído."
+
+      - alert: MyRentGoHigh5xxRate
+        expr: |
+          sum(rate(myrent_http_requests_total{status=~"5.."}[5m]))
+          /
+          sum(rate(myrent_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          app: myrentgo
+          severity: warning
+        annotations:
+          summary: "Tasa de errores HTTP 5xx elevada"
+          description: "Más del 5% de peticiones HTTP devuelven 5xx en los últimos 5 minutos."
+
+      - alert: MyRentGoLoginFailures
+        expr: increase(myrent_login_attempts_total{result="failure"}[15m]) > 20
+        for: 5m
+        labels:
+          app: myrentgo
+          severity: warning
+        annotations:
+          summary: "Muchos intentos de login fallidos"
+          description: "Más de 20 logins fallidos en 15 minutos."

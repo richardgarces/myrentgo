@@ -70,13 +70,14 @@ func NewRouter(deps Deps) *Router {
 
 	if deps.Config.System.MetricsEnabled {
 		metricsHandler := gin.WrapH(promhttp.Handler())
-		if deps.Config.System.MetricsProtected {
-			metrics := r.Group("/metrics")
-			metrics.Use(deps.AuthMW.RequireAuth(), deps.AuthMW.RequireRole(userMgmtRoles...))
-			metrics.GET("", metricsHandler)
-		} else {
-			r.GET("/metrics", metricsHandler)
-		}
+		metrics := r.Group("/metrics")
+		metrics.Use(middleware.MetricsAccess(
+			deps.Config.System.MetricsProtected,
+			deps.Config.System.MetricsScrapeToken,
+			deps.AuthMW,
+			userMgmtRoles...,
+		))
+		metrics.GET("", metricsHandler)
 	}
 
 	api := r.Group("/api/v1")

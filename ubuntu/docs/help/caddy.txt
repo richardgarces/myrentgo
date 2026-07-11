@@ -1,0 +1,33 @@
+(Versión texto plano de caddy.md — less caddy.txt)
+
+========================================================================
+  Caddy (borde)
+========================================================================
+
+
+------------------------------------------------------------------------
+Qué es
+------------------------------------------------------------------------
+Reverse proxy con HTTPS automático (Let's Encrypt).
+
+
+------------------------------------------------------------------------
+Para qué sirve
+------------------------------------------------------------------------
+Un solo punto de entrada HTTP(S) hacia varias apps en platform-net, o destino del Cloudflare Tunnel (http://platform-caddy:80).
+
+
+------------------------------------------------------------------------
+Parámetros clave
+------------------------------------------------------------------------
+  | Parámetro | Significado |
+  | SITE_ADDRESS | Dominio público |
+  | UPSTREAM | Contenedor:puerto de la app |
+  | ACME_EMAIL | Email real ACME (NO @example.com) |
+
+Certificado / DNS / router:
+  docs/help/public-access.txt
+  bash scripts/edge/check-public-access.sh
+  Si curl a la IP pública muestra micro_httpd → el router no reenvía a Caddy.
+
+Edita Caddyfile para múltiples hosts o rutas (/api/*).

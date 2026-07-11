@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    container_name: platform-prometheus
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
+      - --web.enable-lifecycle
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      # Token Bearer para scrapear APIs con /metrics protegido (MyRent Go, etc.)
+      # Crear: printf '%s' "$METRICS_SCRAPE_TOKEN" > metrics_token && chmod 600 metrics_token
+      - ./metrics_token:/etc/prometheus/metrics_token:ro
+      - prometheus_data:/prometheus
+    networks:
+      - platform-net
+
+networks:
+  platform-net:
+    external: true
+
+volumes:
+  prometheus_data:

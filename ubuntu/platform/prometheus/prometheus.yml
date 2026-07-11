@@ -1,0 +1,47 @@
+# prometheus.yml — kit ubuntu (platform-prometheus)
+# Edita scrape_configs según tus apps. MyRent Go usa container_name myrent-api
+# en platform-net (docker-compose.prod.platform.yml).
+
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+  external_labels:
+    platform: shared
+    env: prod
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  # ── MyRent Go API (misma red platform-net) ─────────────────────────────────
+  - job_name: myrentgo-api
+    metrics_path: /metrics
+    scheme: http
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["myrent-api:7070"]
+        labels:
+          app: myrentgo
+          component: api
+    # Requiere METRICS_SCRAPE_TOKEN en ~/my-rent-go/.env y metrics_token montado
+    authorization:
+      credentials_file: /etc/prometheus/metrics_token
+
+  # Host metrics (menú plataforma → node-exporter)
+  - job_name: platform-node
+    static_configs:
+      - targets: ["platform-node-exporter:9100"]
+        labels:
+          component: node
+
+  # Container metrics (menú plataforma → cadvisor)
+  - job_name: platform-cadvisor
+    static_configs:
+      - targets: ["platform-cadvisor:8080"]
+        labels:
+          component: cadvisor
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["platform-alertmanager:9093"]

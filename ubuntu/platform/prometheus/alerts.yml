@@ -1,0 +1,20 @@
+groups:
+  - name: platform
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Target Prometheus caído ({{ $labels.job }})"
+          description: "El job {{ $labels.job }} no responde scrape desde hace 2 minutos."
+
+      - alert: InstanceHighMemoryHint
+        expr: process_resident_memory_bytes > 1.5e9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Proceso con mucha RSS ({{ $labels.job }})"
+          description: "Ajusta esta regla a métricas específicas de tu app (ej. up, process_resident_memory_bytes)."

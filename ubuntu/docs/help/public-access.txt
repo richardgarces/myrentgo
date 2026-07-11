@@ -1,0 +1,70 @@
+================================================================================
+  Acceso público — DNS + router + Caddy / Tunnel
+================================================================================
+
+Menú: bootstrap → 7) Borde → checklist acceso público
+  bash scripts/edge/check-public-access.sh
+
+--------------------------------------------------------------------------------
+Dos caminos
+--------------------------------------------------------------------------------
+
+  A) DNS + port-forward     → abre 80/443 en el router hacia el host
+  B) Cloudflare Tunnel      → sin abrir router (recomendado en casa/NAT)
+
+--------------------------------------------------------------------------------
+Camino A — paso a paso
+--------------------------------------------------------------------------------
+
+1) IP pública
+     curl -4 -s ifconfig.me; echo
+
+2) Cloudflare DNS → Records
+     A  rent  → TU_IP_PUBLICA
+     Proxy: DNS only (gris) mientras sacas el certificado ACME
+     Luego puedes poner Proxied (naranja)
+
+3) SSL/TLS Cloudflare
+     Full (strict) si el origen ya tiene cert; Full temporal si no
+     Always Use HTTPS ON
+
+4) UFW en el host
+     sudo ufw allow 80/tcp
+     sudo ufw allow 443/tcp
+
+5) Caddy .env
+     ACME_EMAIL=correo-real@gmail.com   (NO @example.com)
+     SITE_ADDRESS=rent.tudominio.com
+
+6) Router — port-forward
+     TCP 80  → IP_LAN_DEL_HOST:80
+     TCP 443 → IP_LAN_DEL_HOST:443
+     Desactiva admin remota WAN en puerto 80 si existe
+
+7) Probar desde el Mac (fuera de la LAN)
+     curl -sI --connect-timeout 5 http://TU_IP_PUBLICA/ | head -8
+
+     308 / redirect HTTPS     → OK, llega a Caddy
+     Server: micro_httpd 501  → responde el ROUTER, no el host
+     timeout                  → sin forward o ISP bloquea 80
+
+8) Certificado
+     docker compose -p platform-caddy up -d --force-recreate
+     logs: certificate obtained successfully
+     Luego Proxied (naranja) en Cloudflare
+
+--------------------------------------------------------------------------------
+Errores ACME frecuentes
+--------------------------------------------------------------------------------
+
+  forbidden domain example.com  → cambia ACME_EMAIL
+  challenge 520                 → Cloudflare no alcanza origen (80)
+  micro_httpd                   → arregla port-forward o usa Tunnel
+
+--------------------------------------------------------------------------------
+Camino B — Tunnel
+--------------------------------------------------------------------------------
+
+  Menú 7 → instalar cloudflared → login/create/route dns
+  Ingress: http://platform-caddy:80
+  Ver: docs/help/cloudflared.txt

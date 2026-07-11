@@ -21,6 +21,7 @@ type SystemConfig struct {
 	LogMaxEntries      int
 	MetricsEnabled     bool
 	MetricsProtected   bool
+	MetricsScrapeToken string
 	MetricsRefreshSecs int
 }
 
@@ -126,6 +127,7 @@ func Load() *Config {
 			LogMaxEntries:      getIntEnv("SYSTEM_LOG_MAX_ENTRIES", 5000),
 			MetricsEnabled:     getBoolEnv("METRICS_ENABLED", true),
 			MetricsProtected:   getBoolEnv("METRICS_PROTECTED", appEnv == "production"),
+			MetricsScrapeToken: getEnv("METRICS_SCRAPE_TOKEN", ""),
 			MetricsRefreshSecs: getIntEnv("METRICS_REFRESH_INTERVAL_SECS", 60),
 		},
 	}

@@ -46,22 +46,43 @@ Email Routing **no** sustituye las variables `SMTP_*` del backend.
 
 ## SMTP saliente para MyRent Go
 
-El backend lee la configuración desde `.env`. Referencia completa: [`.env.example`](../../.env.example).
+**Camino por defecto (día 1):** proveedor gratuito (**Brevo**, **SendGrid** o **Gmail**). Mailcow es opcional. Checklist: [DIA1_PRODUCCION_APP_MEINCART.md](../DIA1_PRODUCCION_APP_MEINCART.md).
+
+El backend lee la configuración desde `.env`. Referencia: [`.env.production.example`](../../.env.production.example).
 
 ### Variables requeridas
 
 | Variable | Descripción |
 |----------|-------------|
-| `SMTP_HOST` | Host del proveedor (ej. `smtp.sendgrid.net`) |
+| `SMTP_HOST` | Host del proveedor (ej. `smtp-relay.brevo.com`) |
 | `SMTP_PORT` | Puerto TLS (normalmente `587`) |
 | `SMTP_USER` | Usuario SMTP |
 | `SMTP_PASSWORD` | Contraseña o API key |
 | `SMTP_FROM` | Dirección remitente visible (`noreply@meincart.com`) |
 | `SMTP_FROM_NAME` | Nombre amigable (ej. `MyRent Go`) |
 
-El cliente SMTP considera la configuración **completa** solo si existen host, user, password y from. Si falta alguna, los correos se omiten y la UI en `/email-notifications` mostrará *SMTP no configurado*.
+El cliente SMTP considera la configuración **completa** solo si existen host, user, password y from. Si falta alguna, los correos se omiten y la UI mostrará *SMTP no configurado*.
 
-### Ejemplo `.env` con dominio meincart.com (SendGrid)
+### Ejemplo Brevo (recomendado día 1)
+
+```env
+SMTP_HOST=smtp-relay.brevo.com
+SMTP_PORT=587
+SMTP_USER=1@smtp-brevo.com
+SMTP_PASSWORD=<desde brevo>
+SMTP_FROM=noreply@meincart.com
+SMTP_FROM_NAME=Rent
+```
+
+SPF (unifica un solo TXT `@`, **DNS only**):
+
+```text
+v=spf1 include:spf.brevo.com include:_spf.mx.cloudflare.net ~all
+```
+
+Copia también los TXT DKIM que muestre el panel de Brevo al verificar `meincart.com`.
+
+### Ejemplo SendGrid
 
 ```env
 SMTP_HOST=smtp.sendgrid.net
@@ -72,16 +93,17 @@ SMTP_FROM=noreply@meincart.com
 SMTP_FROM_NAME=MyRent Go
 ```
 
-### Ejemplo `.env` con Gmail (desarrollo o bajo volumen)
+### Ejemplo Gmail (bajo volumen)
 
 Requiere verificación en 2 pasos y [contraseña de aplicación](https://myaccount.google.com/apppasswords).
+Sin Google Workspace, usa tu Gmail como `SMTP_FROM` (no `noreply@meincart.com`).
 
 ```env
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=tu-correo@gmail.com
 SMTP_PASSWORD=xxxx-xxxx-xxxx-xxxx
-SMTP_FROM=notificaciones@meincart.com
+SMTP_FROM=tu-correo@gmail.com
 SMTP_FROM_NAME=MyRent Go
 ```
 
@@ -97,9 +119,11 @@ SMTP_FROM=noreply@myrent.local
 
 Levantar Mailpit: `docker compose -f docker-compose.mail.yml up -d` — bandeja en http://localhost:8025.
 
-## Mailcow (self-hosted, producción)
+## Mailcow (opcional, futuro)
 
-Servidor de correo completo en un VPS dedicado (`mail.meincart.com`). Incluye SMTP saliente para MyRent Go, buzones `@meincart.com`, panel admin y webmail.
+**No es el camino del día 1.** Solo si más adelante quieres correo self-hosted en otro host (`mail.meincart.com`).
+
+Servidor de correo completo en un VPS dedicado. Incluye SMTP saliente, buzones `@meincart.com`, panel admin y webmail.
 
 | Aspecto | Detalle |
 |---------|---------|
@@ -137,6 +161,12 @@ Cloudflare suele proponer automáticamente:
 
 ```text
 TXT @  v=spf1 include:_spf.mx.cloudflare.net ~all
+```
+
+### SMTP saliente con Brevo
+
+```text
+TXT @  v=spf1 include:spf.brevo.com include:_spf.mx.cloudflare.net ~all
 ```
 
 ### SMTP saliente con SendGrid
@@ -181,7 +211,7 @@ DKIM se configura en la consola de administración de Google (registro `google._
 1. Completa `.env` y reinicia el backend.
 2. Inicia sesión en la app y abre **`/email-notifications`**.
 3. Verifica que el estado indique *SMTP configurado*.
-4. Añade un destinatario de prueba y usa **Enviar correo de prueba**.
+4. Añade un destinatario de prueba y usa **Probar formatos** (o correo de prueba).
 
 La API expone el estado en `GET /api/v1/email-recipients/smtp-status`.
 
@@ -189,10 +219,11 @@ La API expone el estado en `GET /api/v1/email-recipients/smtp-status`.
 
 | Tema | Enlace |
 |------|--------|
+| Checklist día 1 | [DIA1_PRODUCCION_APP_MEINCART.md](../DIA1_PRODUCCION_APP_MEINCART.md) |
 | Email Routing | https://developers.cloudflare.com/email-routing/ |
 | Configurar destinos | https://developers.cloudflare.com/email-routing/setup/email-routing-addresses/ |
-| Variables SMTP del proyecto | [`.env.example`](../../.env.example) |
-| Mailcow self-hosted | [mailcow.md](./mailcow.md) |
+| Variables SMTP producción | [`.env.production.example`](../../.env.production.example) |
+| Mailcow (opcional) | [mailcow.md](./mailcow.md) |
 | DNS y proxy | [dns.md](./dns.md) |
 
 ## Volver al índice

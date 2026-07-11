@@ -1,0 +1,28 @@
+version: "3.8"
+
+# MinIO — S3-compatible object storage
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-01-20T14-49-07Z
+    container_name: platform-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_REGION: ${MINIO_REGION:-us-east-1}
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - platform-net
+    # La imagen minio/minio no incluye curl/mc; la disponibilidad se comprueba por logs/API.
+
+networks:
+  platform-net:
+    external: true
+
+volumes:
+  minio_data:

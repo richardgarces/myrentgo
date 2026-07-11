@@ -1,0 +1,29 @@
+# =============================================================================
+# Cloudflare Tunnel — ejemplo de configuración
+# Copia a: /opt/platform/cloudflared/config.yml
+#   sudo cp config.example.yml /opt/platform/cloudflared/config.yml
+#
+# Requisitos previos:
+#   sudo cloudflared tunnel login
+#   sudo cloudflared tunnel create platform
+# El archivo de credenciales queda en /root/.cloudflared/<TUNNEL_ID>.json
+# =============================================================================
+
+# tunnel: UUID o nombre del túnel (salida de `cloudflared tunnel create`)
+tunnel: CHANGE_ME-TUNNEL-ID-OR-NAME
+
+# credentials-file: JSON que genera Cloudflare al crear el túnel
+credentials-file: /root/.cloudflared/CHANGE_ME-TUNNEL-ID.json
+
+# ingress: reglas de enrutado (orden importa; la última es catch-all)
+ingress:
+  # Ejemplo: app pública → Caddy de borde en platform-net (puerto 80 interno)
+  - hostname: app.example.com
+    service: http://platform-caddy:80
+
+  # Ejemplo: otra app en un contenedor distinto
+  # - hostname: api.example.com
+  #   service: http://mi-api:8080
+
+  # Catch-all obligatorio (responde 404 a hosts no listados)
+  - service: http_status:404

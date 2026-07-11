@@ -72,7 +72,7 @@ Puedes ignorar D1 y R2 en el dashboard mientras uses **DNS + SSL + CDN + SMTP ex
 
 | Limitación | Implicación |
 |------------|-------------|
-| **Sin servidor SMTP saliente** | Cloudflare **no** envía correos de la aplicación. MyRent Go necesita SMTP real (Gmail, SendGrid, M365, etc.). |
+| **Sin servidor SMTP saliente** | Cloudflare **no** envía correos de la aplicación. MyRent Go necesita SMTP real (Brevo, SendGrid, Gmail, Microsoft 365). |
 | **Sin buzón IMAP/POP** | No hay bandeja de correo alojada; solo reenvío con Email Routing. |
 | **WAF avanzado limitado** | Reglas gestionadas ampliadas y más reglas custom requieren planes de pago. |
 | **Soporte telefónico / prioritario** | No disponible en Free. |

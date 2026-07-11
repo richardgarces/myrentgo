@@ -4,7 +4,7 @@ function translateApiError(message: string): string {
   const normalized = message.trim().toLowerCase()
   switch (normalized) {
     case 'invalid credentials':
-      return 'Credenciales incorrectas. Usa admin / admin123 o admin@myrent.local / admin123.'
+      return 'Credenciales incorrectas. Verifica correo y contraseña.'
     case 'user inactive':
       return 'Tu cuenta está desactivada. Contacta al administrador.'
     case 'email_not_verified':

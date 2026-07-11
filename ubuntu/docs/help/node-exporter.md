@@ -1,0 +1,10 @@
+# Node Exporter
+
+## Qué es
+Exporter de Prometheus para métricas del **sistema operativo** (CPU, RAM, disco, red, load).
+
+## Para qué sirve
+Dashboards de salud del host. Complementa las métricas de la aplicación.
+
+## Puerto
+`127.0.0.1:9100` — scrape interno: `platform-node-exporter:9100` (ya incluido en `prometheus.yml` del kit).

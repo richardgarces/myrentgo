@@ -1,22 +1,22 @@
 # Mailcow — correo self-hosted para meincart.com
 
-Servidor de correo completo ([mailcow-dockerized](https://github.com/mailcow/mailcow-dockerized)) para enviar notificaciones desde MyRent Go y gestionar buzones `@meincart.com` sin depender de SendGrid/Gmail.
+Servidor de correo completo ([mailcow-dockerized](https://github.com/mailcow/mailcow-dockerized)). **Opcional / futuro** — el día 1 usa SMTP gratuito (Brevo/SendGrid/Gmail); ver [correo.md](./correo.md) y [DIA1](../DIA1_PRODUCCION_APP_MEINCART.md).
 
 ## Cuándo usar Mailcow
 
 | Escenario | Recomendación |
 |-----------|---------------|
-| Desarrollo local | **Mailpit** (`docker-compose.mail.yml`) — sin SMTP real |
-| Producción, bajo volumen | Gmail app password o SendGrid |
-| Producción, control total del dominio | **Mailcow** en VPS dedicado |
+| Día 1 / desarrollo | Mailpit local o **Brevo / SendGrid / Gmail** |
+| Producción, bajo volumen | SMTP free (no Mailcow) |
+| Control total del dominio más adelante | **Mailcow** en VPS dedicado (otro host, no pelear 80/443 con la app) |
 
-Mailcow **no** sustituye Cloudflare Email Routing para correo entrante genérico; puedes combinar ambos (Routing para alias → Gmail, Mailcow para buzones y envío SMTP de la app).
+Mailcow **no** sustituye Cloudflare Email Routing para correo entrante genérico; puedes combinar Routing (alias → Gmail) con Mailcow (buzones + SMTP) cuando lo instales.
 
 ## Arquitectura recomendada
 
 ```mermaid
 graph TB
-    subgraph VPS_App["VPS MyRent Go (app.meincart.com)"]
+    subgraph VPS_App["VPS MyRent Go (rent.meincart.com)"]
         API[MyRent Go API :7070]
     end
 

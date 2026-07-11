@@ -1,0 +1,13 @@
+# Valores por omisión del paso 0 (push de la app) — LOCAL, no versionar.
+#   cp .push-defaults.example .push-defaults
+#
+# Si no existe este archivo, se reutilizan usuario/IP/puerto de
+# ubuntu/.push-defaults (si existe) y el directorio remoto será ~/my-rent-go.
+
+REMOTE_USER=richard
+REMOTE_IP=192.168.1.198
+REMOTE_DIR='~/my-rent-go'
+SSH_PORT=2222
+# SSH_IDENTITY=~/.ssh/id_ed25519
+
+# EXCLUDE_UBUNTU=1  # no empaquetar ubuntu/ (ya se sube con ./ubuntu/push-to-server.sh)

@@ -1,0 +1,86 @@
+(Versión texto plano de CATALOGO.md — less CATALOGO.txt)
+
+========================================================================
+  Catálogo de software — kit Ubuntu / plataforma
+========================================================================
+
+Referencia rápida. Fichas detalladas en docs/help/<id>.txt (también .md).  
+En el servidor: sudo ./bootstrap.sh --info <id>  o  less docs/help/<id>.txt
+
+  | ID | Qué es | Cuándo lo necesitas | Puerto típico (localhost) | Persistencia |
+  | docker | Runtime de contenedores | Siempre para la plataforma y la app | — | Imágenes/volúmenes Docker |
+  | ufw | Firewall sencillo | En todo host expuesto | 22/80/443 | Reglas UFW |
+  | redis | Cache / colas in-memory | Sesiones, rate-limit, workers | 6379 | AOF/RDB opcional |
+  | minio | Object storage S3 | Documentos, Restic, assets | 9000 / 9001 | Volumen minio_data |
+  | vault | Almacén de secretos | Varias apps / rotación de secretos | 8200 | Volumen vault_data |
+  | prometheus | Métricas time-series | Observabilidad | 9090 | Volumen TSDB |
+  | alertmanager | Notificaciones de alertas | Email / Telegram ante fallos | 9093 | Volumen AM |
+  | grafana | Dashboards | Visualizar Prometheus | 3001 | Volumen Grafana |
+  | mongodb | BD documental | Apps NoSQL | 27017 | Volumen Mongo |
+  | postgres | BD SQL | Apps relacionales | 5432 | Volumen PG |
+  | restic | Backup cifrado off-site | Cualquier host en producción | — | Repo S3/B2 |
+  | caddy | Reverse proxy TLS | Borde HTTP(S) multi-app | 80 / 443 | Volumen Caddy |
+  | cloudflared | Cloudflare Tunnel | Casa/NAT sin abrir router | — | Credenciales túnel |
+  | public-access | Guía DNS+router+ACME | Publicar host en casa | — | Checklist bash |
+  | updates | unattended-upgrades + ESM | Seguridad automática / MOTD | — | Menú updates |
+  | node-exporter | Métricas del host | CPU/RAM/disco en Prometheus | 9100 | — |
+  | cadvisor | Métricas por contenedor | Ver qué container satura | 8088 | — |
+
+
+------------------------------------------------------------------------
+Utilidades de host (menú 1)
+------------------------------------------------------------------------
+
+  | Utilidad | Menú | Para qué |
+  | Swap | 1 → 6 | Evitar OOM en hosts con poca RAM |
+  | Logrotate | 1 → 7 | Rotar logs de apt/healthcheck/restic |
+  | Healthcheck | 1 → 8 | Alertar disco/RAM/load/Docker vía cron |
+
+
+------------------------------------------------------------------------
+Qué compartir vs aislar
+------------------------------------------------------------------------
+
+  | Compartir entre apps | Aislar por app |
+  | Docker Engine, platform-net | Contenedores y volúmenes de BD |
+  | MinIO (endpoint), Vault (cluster) | Bucket / path KV / BD lógica |
+  | Prometheus + Grafana + Alertmanager | Labels app= y carpetas Grafana |
+  | Caddy / Cloudflare Tunnel | Hostnames y upstreams por app |
+  | Restic (repo), UFW, unattended-upgrades | Prefijos/tags de backup |
+
+
+------------------------------------------------------------------------
+Orden recomendado en host nuevo
+------------------------------------------------------------------------
+
+0. Desde tu PC: ./ubuntu/push-to-server.sh (al final ejecuta init.bash en el remoto)  
+1. OS + swap + logrotate + healthcheck + unattended (+ cron full opcional)  
+2. SSH hardening + fail2ban + sysctl  
+3. UFW (22/80/443) — o solo 22 si usas Tunnel  
+4. Docker + red platform-net  
+5. Borde: Tunnel y/o Caddy (menú 7)  
+6. Plataforma: exporters, BD, Redis, etc. (menú 5)  
+7. Restic + cron  
+8. Desplegar tus aplicaciones
+
+
+------------------------------------------------------------------------
+Comandos help
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+  # Desde tu PC (paso 0)
+  ./ubuntu/push-to-server.sh --help
+  ./ubuntu/push-to-server.sh user@IP
+
+  # En el servidor — leer ayuda en texto plano (sin GUI)
+  less docs/CATALOGO.txt
+  less docs/help/redis.txt
+  sudo ./bootstrap.sh --info redis
+
+  # En el servidor — menú bootstrap
+  sudo ./bootstrap.sh --help
+  sudo ./bootstrap.sh --list
+  sudo ./bootstrap.sh --info cloudflared
+  sudo ./bootstrap.sh --status
+------------------------------------------------------------------------

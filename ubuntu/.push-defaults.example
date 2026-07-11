@@ -1,0 +1,9 @@
+# Copia a .push-defaults y ajusta (ese archivo no se versiona ni se empaqueta).
+#   cp .push-defaults.example .push-defaults
+# Usa comillas en ~ para expandir en el servidor remoto.
+
+REMOTE_USER=root
+REMOTE_IP=
+REMOTE_DIR='~/platform-kit'
+SSH_PORT=2222
+# SSH_IDENTITY=~/.ssh/id_ed25519

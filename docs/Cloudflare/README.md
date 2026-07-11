@@ -8,8 +8,10 @@ Guía práctica para configurar el dominio **meincart.com** en el plan **Free** 
 |-----------|-----------|
 | [plan-free.md](./plan-free.md) | Qué incluye el plan gratuito, D1/R2 y límites |
 | [dns.md](./dns.md) | Registros DNS, proxy naranja/gris y SSL/TLS |
-| [correo.md](./correo.md) | Email Routing, SPF/DKIM/DMARC y SMTP real |
-| [mailcow.md](./mailcow.md) | Servidor Mailcow self-hosted (mail.meincart.com) |
+| [correo.md](./correo.md) | Email Routing, SPF/DKIM/DMARC y SMTP gratuito (Brevo/SendGrid/Gmail) |
+| [mailcow.md](./mailcow.md) | Mailcow self-hosted (**opcional**, futuro) |
+| [DIA1_PRODUCCION_APP_MEINCART.md](../DIA1_PRODUCCION_APP_MEINCART.md) | Checklist día 1: DNS → VPS → `.env` → deploy → SMTP → backup |
+| [ubuntu/README.md](../../ubuntu/README.md) | Kit genérico de host (paso 0 ZIP/SSH, SO, UFW, Docker, plataforma) |
 | Este archivo | Escenarios, integración con MyRent Go y referencias |
 
 ## Arquitectura recomendada
@@ -30,7 +32,7 @@ graph LR
     subgraph Origen["VPS / servidor"]
         RP[Caddy / Nginx]
         API[MyRent Go API]
-        SMTP_EXT[SMTP externo<br/>SendGrid / Gmail / M365]
+        SMTP_EXT[SMTP gratuito<br/>Brevo / SendGrid / Gmail]
     end
 
     U --> DNS --> SSL --> RP --> API
@@ -56,7 +58,7 @@ Tabla resumida; el detalle y las explicaciones de proxy están en [dns.md](./dns
 | Tipo | Nombre | Destino / valor | Proxy |
 |------|--------|-----------------|-------|
 | A | `@` | IP del VPS | Proxied (naranja) |
-| A | `app` | IP del VPS | Proxied |
+| A | `rent` | IP del VPS | Proxied |
 | A | `api` | IP del VPS | Proxied |
 | CNAME | `www` | `meincart.com` | Proxied |
 | MX | `@` | Servidores MX de Email Routing | **DNS only** (gris) |
@@ -81,13 +83,17 @@ Cloudflare no interviene en desarrollo. Usa Mailpit o Gmail con contraseña de a
 
 | Aspecto | Configuración |
 |---------|---------------|
-| DNS | `app.meincart.com` y/o `api.meincart.com` → IP del VPS, **Proxied** |
+| DNS | `rent.meincart.com` y/o `api.meincart.com` → IP del VPS, **Proxied** |
 | Origen | Caddy/Nginx con certificado válido (Let's Encrypt u origen Cloudflare) |
 | SSL en Cloudflare | **Full (strict)** — ver [dns.md](./dns.md) |
-| SMTP | Proveedor real (SendGrid, Gmail, M365, etc.) con `SMTP_FROM` en `@meincart.com` |
+| SMTP | **Brevo / SendGrid / Gmail** (SMTP free). Mailcow opcional más adelante |
 | WAF | Activar reglas gestionadas disponibles en plan Free |
 
 Flujo: usuario → Cloudflare (CDN + SSL) → reverse proxy en VPS → contenedores MyRent Go.
+
+Checklist día 1: [DIA1_PRODUCCION_APP_MEINCART.md](../DIA1_PRODUCCION_APP_MEINCART.md).  
+Índice de guías: [INDICE_PRODUCCION.md](../INDICE_PRODUCCION.md).  
+Host Ubuntu genérico: [ubuntu/README.md](../../ubuntu/README.md).
 
 ### Solo dominio (sin VPS aún)
 
@@ -103,15 +109,15 @@ Flujo: usuario → Cloudflare (CDN + SSL) → reverse proxy en VPS → contenedo
 
 | Subdominio | Uso típico en MyRent Go | Proxy recomendado |
 |------------|-------------------------|-------------------|
-| `app.meincart.com` | PWA / frontend | Proxied |
+| `rent.meincart.com` | PWA / frontend | Proxied |
 | `api.meincart.com` | API REST + WebSocket | Proxied |
 | `meincart.com` / `www` | Redirección o landing | Proxied |
 
 En `.env` de producción:
 
 ```env
-CORS_ORIGINS=https://app.meincart.com
-FRONTEND_URL=https://app.meincart.com
+CORS_ORIGINS=https://rent.meincart.com
+FRONTEND_URL=https://rent.meincart.com
 ```
 
 El reverse proxy (Caddy) debe enrutar `/api` y `/ws` al backend. En Cloudflare, evita cachear rutas de API y WebSocket (ver [deploy/cloudflare/README.md](../../deploy/cloudflare/README.md)).
@@ -122,7 +128,18 @@ El reverse proxy (Caddy) debe enrutar `/api` y `/ws` al backend. En Cloudflare, 
 
 MyRent Go envía correos solo si están definidas `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` y `SMTP_FROM`. La plantilla completa está en [`.env.example`](../../.env.example).
 
-Ejemplo con dominio **meincart.com** y SendGrid:
+Ejemplo con dominio **meincart.com** y **Brevo** (día 1):
+
+```env
+SMTP_HOST=smtp-relay.brevo.com
+SMTP_PORT=587
+SMTP_USER=tu-login-brevo
+SMTP_PASSWORD=tu-smtp-key
+SMTP_FROM=noreply@meincart.com
+SMTP_FROM_NAME=MyRent Go
+```
+
+Ejemplo **SendGrid**:
 
 ```env
 SMTP_HOST=smtp.sendgrid.net
@@ -133,14 +150,14 @@ SMTP_FROM=noreply@meincart.com
 SMTP_FROM_NAME=MyRent Go
 ```
 
-Ejemplo con Gmail (pruebas o bajo volumen):
+Ejemplo con Gmail (bajo volumen; `SMTP_FROM` = tu Gmail sin Workspace):
 
 ```env
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=tu-correo@gmail.com
 SMTP_PASSWORD=xxxx-xxxx-xxxx-xxxx
-SMTP_FROM=notificaciones@meincart.com
+SMTP_FROM=tu-correo@gmail.com
 SMTP_FROM_NAME=MyRent Go
 ```
 

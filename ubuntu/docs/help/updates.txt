@@ -1,0 +1,47 @@
+================================================================================
+  Actualizaciones automáticas — unattended-upgrades y ESM Apps
+================================================================================
+
+Menú:
+  sudo ./updates-menu.sh
+  sudo ./bootstrap.sh  →  1) SO  →  3) Menú actualizaciones
+
+--------------------------------------------------------------------------------
+Mensaje al login (MOTD)
+--------------------------------------------------------------------------------
+
+  «mantenimiento de seguridad expandido para Applications desactivado»
+  «actualizaciones… con ESM Apps»
+
+  Eso es Ubuntu Pro / ESM (Canonical), OPCIONAL y de pago/gratis con límites.
+  NO significa que unattended-upgrades esté mal.
+
+  Capa gratis (este kit):
+    unattended-upgrades → solo -security del archivo Ubuntu, cada día.
+
+  Capa Pro (opcional):
+    sudo pro attach <token>   # https://ubuntu.com/pro
+
+--------------------------------------------------------------------------------
+Qué hace el menú
+--------------------------------------------------------------------------------
+
+  2) Activa Update-Package-Lists + Unattended-Upgrade diarios
+  3) Muestra si el servicio está activo y si hay parches pendientes
+  5) Aplica seguridad ahora (sin esperar al cron)
+  6) Cron de apt upgrade COMPLETO (todos los paquetes; más agresivo)
+  8) Reinicio automático si un parche de kernel lo pide (off por defecto)
+
+Archivos:
+  /etc/apt/apt.conf.d/20auto-upgrades
+  /etc/apt/apt.conf.d/50unattended-upgrades
+  /var/log/unattended-upgrades/unattended-upgrades.log
+
+--------------------------------------------------------------------------------
+Recomendación BMAX / casa
+--------------------------------------------------------------------------------
+
+  1. Menú → opción 2 (activar seguridad automática)
+  2. Menú → opción 3 (comprobar estado = OK)
+  3. Ignorar ESM Apps salvo que actives Ubuntu Pro a propósito
+  4. Opción 6 (full upgrade) solo si quieres actualizar TODO a diario

@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: platform-node-exporter
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    pid: host
+    ports:
+      - "127.0.0.1:${NODE_EXPORTER_PORT:-9100}:9100"
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - platform-net
+
+networks:
+  platform-net:
+    external: true

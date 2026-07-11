@@ -23,6 +23,10 @@ bin/
 !.env.*.example
 !**/.env.example
 !**/.env.*.example
+.push-defaults
+ubuntu/.push-defaults
+.build/
+ubuntu/.build/
 *.pem
 *.key
 *.p12
@@ -34,6 +38,12 @@ secrets.json
 /storage/
 /backups/
 /exports/
+/deploy/platform/.env.monitoring
+!/deploy/platform/.env.monitoring.example
+/deploy/platform/restic.env
+!/deploy/platform/restic.env.example
+/deploy/platform/prometheus/metrics_token
+/deploy/platform/alertmanager/alertmanager.yml
 /uploads/
 /logs/
 /tmp/

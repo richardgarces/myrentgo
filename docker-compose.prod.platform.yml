@@ -1,0 +1,30 @@
+# Override para host con kit ubuntu/platform-caddy (borde ya en :80/:443).
+# Uso:
+#   EDGE=platform ./scripts/deploy-prod.sh
+#   # o: docker compose -f docker-compose.prod.yml -f docker-compose.prod.platform.yml up -d --build
+#
+# Efectos:
+# - No arranca el Caddy de MyRent (evita choque de puertos con platform-caddy).
+# - Une api + frontend a platform-net para que platform-caddy haga reverse_proxy.
+# - Nombres fijos: myrent-api, myrent-frontend (ver deploy/caddy/Caddyfile.platform-edge).
+
+services:
+  caddy:
+    profiles: ["builtin-caddy"]
+
+  api:
+    container_name: myrent-api
+    networks:
+      - default
+      - platform-net
+
+  frontend:
+    container_name: myrent-frontend
+    networks:
+      - default
+      - platform-net
+
+networks:
+  platform-net:
+    external: true
+    name: platform-net

@@ -16,9 +16,7 @@ import (
 )
 
 const adminEmail = "admin@myrent.local"
-const adminPassword = "admin123"
 const pentestEmail = "gestor@test.local"
-const pentestPassword = "pentest123"
 
 var orgScopedCollections = []string{
 	"properties", "tenants", "leases", "payments", "mortgages",
@@ -28,6 +26,22 @@ var orgScopedCollections = []string{
 
 func main() {
 	cfg := config.Load()
+	if cfg.App.Env == "production" && os.Getenv("SEED_ALLOW_PROD") != "1" {
+		log.Fatal("seed bloqueado en producción (APP_ENV=production). Usa SEED_ALLOW_PROD=1 solo a propósito, con SEED_ADMIN_PASSWORD fuerte.")
+	}
+
+	adminPassword := os.Getenv("SEED_ADMIN_PASSWORD")
+	if adminPassword == "" {
+		if cfg.App.Env == "production" {
+			log.Fatal("en producción debes definir SEED_ADMIN_PASSWORD (no se usa admin123)")
+		}
+		adminPassword = "admin123" // solo desarrollo local
+	}
+	pentestPassword := os.Getenv("SEED_PENTEST_PASSWORD")
+	if pentestPassword == "" {
+		pentestPassword = "pentest123" // solo desarrollo / pentest local
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -63,7 +77,7 @@ func main() {
 		fmt.Println("  Login:    admin /", adminPassword)
 		if len(existing.Organizations) > 0 {
 			fmt.Println("  Org ID:   ", existing.Organizations[0].OrganizationID)
-			if err := ensurePentestUser(ctx, userRepo, existing.Organizations[0].OrganizationID); err != nil {
+			if err := ensurePentestUser(ctx, userRepo, existing.Organizations[0].OrganizationID, pentestPassword); err != nil {
 				log.Fatal(err)
 			}
 		}
@@ -98,7 +112,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if err := ensurePentestUser(ctx, userRepo, org.ID); err != nil {
+	if err := ensurePentestUser(ctx, userRepo, org.ID, pentestPassword); err != nil {
 		log.Fatal(err)
 	}
 
@@ -116,7 +130,7 @@ func main() {
 	fmt.Println("  Pentest:  ", pentestEmail, "/", pentestPassword, "(sin MFA, para security/run-pentest.sh)")
 }
 
-func ensurePentestUser(ctx context.Context, userRepo *mongodb.UserRepo, orgID string) error {
+func ensurePentestUser(ctx context.Context, userRepo *mongodb.UserRepo, orgID, password string) error {
 	existing, err := userRepo.FindByEmail(ctx, pentestEmail)
 	if err != nil {
 		return err
@@ -125,7 +139,7 @@ func ensurePentestUser(ctx context.Context, userRepo *mongodb.UserRepo, orgID st
 		return nil
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(pentestPassword), 12)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {
 		return err
 	}
@@ -137,7 +151,7 @@ func ensurePentestUser(ctx context.Context, userRepo *mongodb.UserRepo, orgID st
 	if err := userRepo.Create(ctx, u); err != nil {
 		return err
 	}
-	fmt.Println("Pentest user created:", pentestEmail, "/", pentestPassword)
+	fmt.Println("Pentest user created:", pentestEmail)
 	return nil
 }
 

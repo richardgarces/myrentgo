@@ -1,0 +1,6 @@
+# Secretos y datos locales del kit ubuntu (no versionar)
+**/.env
+!**/.env.example
+**/metrics_token
+.build/
+.push-defaults

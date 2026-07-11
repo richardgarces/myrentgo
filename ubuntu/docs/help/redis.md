@@ -1,0 +1,27 @@
+# Redis
+
+## Qué es
+Almacén clave-valor en memoria (RAM), opcionalmente persistente (AOF/RDB).
+
+## Para qué sirve
+- Cache de respuestas / sesiones
+- Rate limiting distribuido
+- Colas de trabajos (Sidekiq, Bull, Asynq, RQ)
+- Locks distribuidos (`SET NX`)
+
+## Cuándo instalarlo
+Si tu app o workers lo declaran como dependencia (cache, colas, sesiones compartidas).
+
+## Parámetros clave (`.env.example`)
+| Parámetro | Significado |
+|-----------|-------------|
+| `REDIS_PASSWORD` | Auth; sin ella cualquiera en la red Docker lee datos |
+| `REDIS_MAXMEMORY` | Tope RAM para no tumbar el host |
+| `REDIS_MAXMEMORY_POLICY` | Qué borrar al llenarse (`allkeys-lru` = cache) |
+| `REDIS_APPENDONLY` | Persistencia a disco |
+
+## Seguridad
+Puerto bind `127.0.0.1`. No exponer 6379 en UFW. Password fuerte.
+
+## Conexión
+Desde contenedor en `platform-net`: `redis://:PASS@platform-redis:6379/0`
